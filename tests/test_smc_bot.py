@@ -125,3 +125,21 @@ def test_realized_r_is_tracked():
     bot.trade.sl = bot.trade.entry + risk
     bot.tick()
     assert bot.trade is None and abs(bot.day_r + 1) < 0.05
+
+
+def test_risk_based_size_makes_1r_a_fixed_dollar_amount():
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = SMCBot(make_cfg(dry_run=False, size_decimals=4, risk_usd=50.0,
+                          max_notional_usd=None), client)
+    bot.tick()
+    t = bot.trade
+    assert abs(t.size * t.risk - 50.0) < 0.01  # losing at SL costs $50
+    assert client.orders[0]["size"] == f"{t.size:.4f}"
+
+
+def test_notional_cap_limits_size():
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = SMCBot(make_cfg(dry_run=False, size_decimals=4, risk_usd=50.0,
+                          max_notional_usd=10000.0), client)
+    bot.tick()
+    assert bot.trade.size * bot.trade.entry <= 10000.0

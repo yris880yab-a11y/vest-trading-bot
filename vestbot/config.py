@@ -51,6 +51,8 @@ class Config:
     min_momentum: int
     size_decimals: int
     max_daily_loss_r: float
+    risk_usd: float | None
+    max_notional_usd: float | None
     max_trades_per_day: int
     state_file: str | None
     interval: str
@@ -85,6 +87,8 @@ class Config:
             min_momentum=int(_env("BOT_MIN_MOMENTUM", "3")),
             size_decimals=int(_env("BOT_SIZE_DECIMALS", "4")),
             max_daily_loss_r=float(_env("BOT_MAX_DAILY_LOSS_R", "3")),
+            risk_usd=float(v) if (v := _env("BOT_RISK_USD")) else None,
+            max_notional_usd=float(v) if (v := _env("BOT_MAX_NOTIONAL_USD")) else None,
             max_trades_per_day=int(_env("BOT_MAX_TRADES_PER_DAY", "6")),
             state_file=_env("BOT_STATE_FILE", "bot_state.json"),
             interval=_env("BOT_INTERVAL", "15m"),

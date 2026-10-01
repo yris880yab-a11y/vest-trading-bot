@@ -151,15 +151,28 @@ class SMCBot(Bot):
         q = 10 ** self.cfg.size_decimals
         return f"{math.floor(size * q) / q:.{self.cfg.size_decimals}f}"
 
+    def position_size(self, rep: Report) -> float:
+        """Fixed BOT_ORDER_SIZE, or size so that hitting SL loses BOT_RISK_USD (linear perps:
+        P&L = size x price move), capped by BOT_MAX_NOTIONAL_USD."""
+        if not self.cfg.risk_usd:
+            return float(self.cfg.order_size)
+        size = self.cfg.risk_usd / abs(rep.price - rep.sl)
+        if self.cfg.max_notional_usd:
+            size = min(size, self.cfg.max_notional_usd / rep.price)
+        return float(self._fmt(size))
+
     def enter(self, rep: Report) -> None:
         m1 = rep.mss1
         key = (rep.direction, m1.mss_level, m1.sweep_price) if m1 else None
         if key is None or key == self.last_setup:
             return  # already traded this exact setup
         self.last_setup = key
-        size = float(self.cfg.order_size)
-        log.info("ENTRY %s %s @ %.2f SL %.2f targets %s", rep.direction, self.cfg.order_size,
-                 rep.price, rep.sl, rep.targets)
+        size = self.position_size(rep)
+        if size <= 0:
+            log.warning("Khối lượng tính ra = 0 (rủi ro quá nhỏ so với SL) — bỏ qua lệnh")
+            return
+        log.info("ENTRY %s %s @ %.2f SL %.2f (1R = $%.2f) targets %s", rep.direction,
+                 self._fmt(size), rep.price, rep.sl, size * abs(rep.price - rep.sl), rep.targets)
         self._market(is_buy=rep.direction == "LONG", size=self._fmt(size), price=rep.price,
                      reduce_only=False)
         self.trade = Trade(rep.direction, rep.price, rep.sl, list(rep.targets), size, key,
