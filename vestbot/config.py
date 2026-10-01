@@ -1,0 +1,102 @@
+"""Load bot settings from environment variables (or a .env file)."""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+ENDPOINTS = {
+    "prod": {
+        "rest": "https://server-prod.hz.vestmarkets.com/v2",
+        "ws": "wss://ws-prod.hz.vestmarkets.com/ws-api",
+        "verifying_contract": "0x919386306C47b2Fe1036e3B4F7C40D22D2461a23",
+    },
+    "dev": {
+        "rest": "https://server-dev.hz.vestmarkets.com/v2",
+        "ws": "wss://ws-dev.hz.vestmarkets.com/ws-api",
+        "verifying_contract": "0x8E4D87AEf4AC4D5415C35A12319013e34223825B",
+    },
+}
+
+
+def _env(name: str, default: str | None = None) -> str | None:
+    value = os.getenv(name, default)
+    return value if value not in ("", None) else default
+
+
+def _bool(name: str, default: bool) -> bool:
+    value = _env(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+@dataclass
+class Config:
+    env: str
+    rest_url: str
+    ws_url: str
+    verifying_contract: str
+
+    api_key: str | None
+    account_group: int | None
+    signing_private_key: str | None
+
+    symbol: str
+    interval: str
+    fast_ema: int
+    slow_ema: int
+    order_size: str
+    leverage: int
+    stop_loss_pct: float
+    take_profit_pct: float
+    max_slippage_pct: float
+    poll_seconds: int
+    dry_run: bool
+
+    @classmethod
+    def from_env(cls) -> "Config":
+        env = (_env("VEST_ENV", "prod") or "prod").lower()
+        if env not in ENDPOINTS:
+            raise ValueError(f"VEST_ENV must be one of {list(ENDPOINTS)}, got {env!r}")
+        ep = ENDPOINTS[env]
+        group = _env("VEST_ACCOUNT_GROUP")
+        return cls(
+            env=env,
+            rest_url=_env("VEST_REST_URL", ep["rest"]),
+            ws_url=_env("VEST_WS_URL", ep["ws"]),
+            verifying_contract=_env("VEST_VERIFYING_CONTRACT", ep["verifying_contract"]),
+            api_key=_env("VEST_API_KEY"),
+            account_group=int(group) if group is not None else None,
+            signing_private_key=_env("VEST_SIGNING_PRIVATE_KEY"),
+            symbol=_env("BOT_SYMBOL", "BTC-PERP"),
+            interval=_env("BOT_INTERVAL", "15m"),
+            fast_ema=int(_env("BOT_FAST_EMA", "9")),
+            slow_ema=int(_env("BOT_SLOW_EMA", "21")),
+            order_size=_env("BOT_ORDER_SIZE", "0.001"),
+            leverage=int(_env("BOT_LEVERAGE", "2")),
+            stop_loss_pct=float(_env("BOT_STOP_LOSS_PCT", "1.5")),
+            take_profit_pct=float(_env("BOT_TAKE_PROFIT_PCT", "3.0")),
+            max_slippage_pct=float(_env("BOT_MAX_SLIPPAGE_PCT", "0.5")),
+            poll_seconds=int(_env("BOT_POLL_SECONDS", "30")),
+            dry_run=_bool("BOT_DRY_RUN", True),
+        )
+
+    def require_credentials(self) -> None:
+        missing = [
+            name
+            for name, value in (
+                ("VEST_API_KEY", self.api_key),
+                ("VEST_ACCOUNT_GROUP", self.account_group),
+                ("VEST_SIGNING_PRIVATE_KEY", self.signing_private_key),
+            )
+            if value is None
+        ]
+        if missing:
+            raise RuntimeError(
+                "Missing credentials: " + ", ".join(missing)
+                + ". Run `python scripts/register.py` first and put the result in .env"
+            )
