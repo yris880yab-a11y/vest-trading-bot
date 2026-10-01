@@ -50,6 +50,9 @@ class Config:
     confirm_symbol: str | None
     min_momentum: int
     size_decimals: int
+    max_daily_loss_r: float
+    max_trades_per_day: int
+    state_file: str | None
     interval: str
     fast_ema: int
     slow_ema: int
@@ -81,6 +84,9 @@ class Config:
             confirm_symbol=_env("BOT_CONFIRM_SYMBOL"),
             min_momentum=int(_env("BOT_MIN_MOMENTUM", "3")),
             size_decimals=int(_env("BOT_SIZE_DECIMALS", "4")),
+            max_daily_loss_r=float(_env("BOT_MAX_DAILY_LOSS_R", "3")),
+            max_trades_per_day=int(_env("BOT_MAX_TRADES_PER_DAY", "6")),
+            state_file=_env("BOT_STATE_FILE", "bot_state.json"),
             interval=_env("BOT_INTERVAL", "15m"),
             fast_ema=int(_env("BOT_FAST_EMA", "9")),
             slow_ema=int(_env("BOT_SLOW_EMA", "21")),

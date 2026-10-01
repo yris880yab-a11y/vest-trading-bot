@@ -87,3 +87,41 @@ def test_opposite_5m_mss_exits_everything():
     bot.trade = Trade("SHORT", 30558, 30613, [30500.0, None, None, None], 1.0, ("k",))
     bot.manage(Report("X", 30562, mss5=MSS("LONG", 30540, 30535, 0, 30565, 1, True)))
     assert bot.trade is None and client.orders[-1]["size"] == "1.00"
+
+
+def test_state_survives_restart(tmp_path):
+    state = tmp_path / "state.json"
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = SMCBot(make_cfg(dry_run=False, order_size="1", size_decimals=2,
+                          state_file=str(state)), client)
+    bot.tick()
+    assert bot.trade and state.exists()
+
+    again = SMCBot(make_cfg(dry_run=False, order_size="1", size_decimals=2,
+                            state_file=str(state)), client)
+    assert again.trade == bot.trade and again.last_setup == bot.last_setup
+    assert again.day_trades == 1
+
+
+def test_daily_loss_limit_blocks_new_entries():
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = SMCBot(make_cfg(dry_run=False, order_size="1", size_decimals=2,
+                          max_daily_loss_r=2), client)
+    bot._roll_day()
+    bot.day_r = -2.0
+    bot.tick()
+    assert bot.trade is None and client.orders == []
+    bot.day_r, bot.day_trades = 0.0, bot.cfg.max_trades_per_day
+    bot.tick()
+    assert bot.trade is None and client.orders == []
+
+
+def test_realized_r_is_tracked():
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = SMCBot(make_cfg(dry_run=False, order_size="1", size_decimals=2), client)
+    bot.tick()
+    risk = bot.trade.risk
+    move_to(client, bot.trade.entry + risk)  # short goes against us by exactly 1R -> SL area
+    bot.trade.sl = bot.trade.entry + risk
+    bot.tick()
+    assert bot.trade is None and abs(bot.day_r + 1) < 0.05

@@ -24,6 +24,7 @@ class FakeClient:
 def make_cfg(**over):
     cfg = Config.from_env()
     cfg.dry_run = True
+    cfg.state_file = None
     cfg.fast_ema, cfg.slow_ema = 3, 10
     for k, v in over.items():
         setattr(cfg, k, v)

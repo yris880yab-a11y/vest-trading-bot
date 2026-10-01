@@ -93,3 +93,10 @@ def test_no_chasing_far_from_5m_mss(monkeypatch):
     rep = analyze(all_tf(short_setup_1m(push=(30560,))))
     assert rep.decision.startswith("WAIT")
     assert any("quá xa location" in r for r in rep.reasons)
+
+
+def test_stale_5m_setup_waits(monkeypatch):
+    import vestbot.smc as smc
+    monkeypatch.setattr(smc, "FRESH_5M_BARS", 0)
+    rep = analyze(all_tf(short_setup_1m(push=(30560,))))
+    assert any("đã cũ" in r for r in rep.reasons)

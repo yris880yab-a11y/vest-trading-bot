@@ -19,8 +19,8 @@ Flow: **Daily/4H context → 1H confirm → 15M location → 5M sweep + MSS → 
 | 7. Entry | 1M | khi retest vùng MSS fail (short) / hold (long) |
 | 8. SL | — | trên sweep high/retest (short), dưới sweep low/retest (long) — không dùng SL cố định |
 | 9. Target | — | TP1: liquidity gần nhất 1M/5M · TP2: 15M/PDH-PDL · TP3: 1H/4H · Runner: Daily |
-| 10. Quản lý | — | TP1 chốt 50% + dời SL về entry, TP2 chốt tiếp + SL lên TP1, không add/đuổi; 1M MSS ngược → thoát hết |
-| 11. WAIT | — | giữa range, chưa sweep, chưa MSS, break chưa retest, momentum < 3, chạy quá xa, 1M/5M mâu thuẫn |
+| 10. Quản lý | — | TP1 chốt 50% + dời SL về entry, TP2 chốt tiếp + SL lên TP1, không add/đuổi; 1M MSS ngược → trước TP1 cắt 50%, sau TP1 thoát runner; 5M MSS ngược → thoát hết |
+| 11. WAIT | — | giữa range, chưa sweep, chưa MSS, MSS đến chậm sau sweep, setup 5M đã cũ, break chưa retest, momentum < 3, chạy quá xa location, TP1 < 0.5R, 1M/5M mâu thuẫn |
 
 Xem nhanh phân tích (không đặt lệnh), in đúng format Bias → Retest zone → MSS → Retest → Entry → SL → TP1/2/3 → target xa → Momentum → LONG/SHORT/WAIT:
 
@@ -47,7 +47,30 @@ Momentum      : 3/5 VALID  [displacement ✓, push 3-4 nến ✓, acceleration �
 
 Chiến lược EMA crossover cũ vẫn dùng được với `BOT_STRATEGY=ema`.
 
-**Giới hạn khi máy hoá framework:** những phần vốn cần mắt người đã được quy thành luật cố định — swing = fractal 2 nến mỗi bên, displacement = thân nến ≥ 1 ATR, vùng retest = mức MSS + 0.3 ATR, "quá xa" = > 2 ATR khỏi vùng retest, session level hiện chỉ dùng PDH/PDL. Có thể chỉnh trong `vestbot/smc.py`. SL/TP được bot tự theo dõi mỗi `BOT_POLL_SECONDS` giây (không đặt lệnh stop trên sàn), nên bot phải chạy liên tục.
+**Giới hạn khi máy hoá framework:** những phần vốn cần mắt người đã được quy thành luật cố định — swing = fractal 2 nến mỗi bên, displacement = thân nến ≥ 1 ATR, vùng retest = mức MSS + 0.3 ATR, "quá xa" = > 2 ATR khỏi vùng retest, session level hiện chỉ dùng PDH/PDL. Các ngưỡng chính nằm đầu file `vestbot/smc.py`:
+
+| Hằng số | Mặc định | Ý nghĩa |
+|---|---|---|
+| `TP1_MIN_R` | 0.5 | liquidity gần hơn 0.5R không tính là target |
+| `MAX_CHASE_ATR15` | 1.5 | không vào nếu giá đã chạy quá 1.5 ATR(15M) khỏi mức MSS 5M |
+| `FRESH_5M_BARS` | 12 | trigger 1M phải đến trong 12 nến 5M (1 giờ) sau MSS 5M |
+| `MSS_MAX_BARS` | 12 | MSS phải đến trong 12 nến sau sweep (sweep → displacement → MSS, không phải bò dần) | SL/TP được bot tự theo dõi mỗi `BOT_POLL_SECONDS` giây (không đặt lệnh stop trên sàn), nên bot phải chạy liên tục.
+
+### An toàn khi chạy thật
+
+- `BOT_MAX_DAILY_LOSS_R` (mặc định 3): lỗ đủ 3R trong ngày (phiên CME, bắt đầu 22:00 UTC = 5:00 sáng VN) thì ngừng vào lệnh mới.
+- `BOT_MAX_TRADES_PER_DAY` (mặc định 6): tối đa 6 lệnh mỗi ngày.
+- `BOT_STATE_FILE` (mặc định `bot_state.json`): lưu lệnh đang mở (SL, TP đã chạm, R đã chốt). Bot tắt/bật lại vẫn quản lý tiếp lệnh đó; nếu trên sàn không còn vị thế thì bỏ trạng thái cũ.
+
+## Backtest
+
+Phát lại dữ liệu từng phút qua đúng code bot (không nhìn trước tương lai, có tính 1 tick phí + trượt giá mỗi chiều):
+
+```bash
+# cần data/{MÃ}_{1m,5m,15m,1h,4h,1d}.csv với cột time,open,high,low,close (time = UTC)
+python scripts/backtest.py NQ --confirm ES
+python scripts/backtest.py GC --set TP1_MIN_R=0.4 --cost 0.2   # thử ngưỡng khác
+```
 
 ## Cấu trúc
 
@@ -62,6 +85,7 @@ vestbot/
   strategy.py  # EMA crossover (chiến lược cũ)
   bot.py       # vòng lặp giao dịch
 scripts/register.py  # tạo signing key + lấy API key
+scripts/backtest.py  # backtest từng phút trên dữ liệu lịch sử
 tests/               # unit test (chạy offline)
 ```
 

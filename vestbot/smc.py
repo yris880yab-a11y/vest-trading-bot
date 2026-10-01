@@ -21,6 +21,8 @@ TIMEFRAMES = ("1d", "4h", "1h", "15m", "5m", "1m")
 # Rules that turn the discretionary framework into numbers (tune here).
 TP1_MIN_R = 0.5        # liquidity closer than this (in R) is noise, not a target
 MAX_CHASE_ATR15 = 1.5  # entry may be at most this many 15M ATRs past the 5M MSS level
+FRESH_5M_BARS = 12     # the 1M trigger must come within this many 5M bars of the 5M MSS
+MSS_MAX_BARS = 12      # MSS must follow the sweep within this many candles (any timeframe)
 
 
 # --------------------------------------------------------------------------- data
@@ -158,7 +160,7 @@ def _bearish_mss(c: list[Candle], n: int, lookback: int) -> MSS | None:
         level = ref[-1].price
         # 3) MSS: first close below that swing low, without accepting above the swept level
         k = None
-        for m in range(j + 1, len(c)):
+        for m in range(j + 1, min(len(c), j + 1 + MSS_MAX_BARS)):
             if c[m].c > s.price and m > j + 1:
                 break
             if c[m].c < level:
@@ -436,6 +438,9 @@ def analyze(data: dict[str, list[Candle]], symbol: str = "",
         why.append("chưa ở location 15M")
 
     sign = 1 if direction == "LONG" else -1
+    age = len(closed["5m"]) - 1 - m5.mss_i
+    if age > FRESH_5M_BARS:
+        why.append(f"setup 5M đã cũ ({age * 5} phút sau MSS)")
     if sign * (price - m5.mss_level) > MAX_CHASE_ATR15 * a15:
         why.append(f"giá đã chạy quá xa location (> {MAX_CHASE_ATR15} ATR 15M từ MSS 5M)")
 

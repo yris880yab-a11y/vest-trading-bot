@@ -8,7 +8,8 @@ Data: CSV files ``data/{SYMBOL}_{tf}.csv`` with columns time,open,high,low,close
 
 At each 1M close T the bot sees only bars that had closed by T, plus a "forming"
 bar for every timeframe rebuilt from the 1M/5M bars up to T. Orders fill at the
-1M close (no slippage, no fees). Daily bars follow the CME session (22:00-21:00 UTC).
+1M close, made worse by ``--cost`` points per side (fees + slippage; default 1 tick).
+Daily bars follow the CME session (22:00-21:00 UTC).
 """
 from __future__ import annotations
 
@@ -87,9 +88,13 @@ class Market:
         return closed + [aggregate(parts, int(start.timestamp() * 1000))]
 
 
+DEFAULT_COST = {"NQ": 0.25, "ES": 0.25, "GC": 0.1}  # one tick per side
+
+
 class BacktestClient:
-    def __init__(self, market: Market):
+    def __init__(self, market: Market, cost: float = 0.0):
         self.market = market
+        self.cost = cost
         self.orders: list[dict] = []
         self.price = 0.0
 
@@ -97,7 +102,8 @@ class BacktestClient:
         return [[x.t, x.o, x.h, x.l, x.c, 0] for x in self.market.view(symbol, interval, limit)]
 
     def place_order(self, **kw):
-        self.orders.append({**kw, "fill": self.price, "time": self.market.now})
+        fill = self.price + (self.cost if kw["is_buy"] else -self.cost)
+        self.orders.append({**kw, "fill": fill, "time": self.market.now})
         return {"id": str(len(self.orders))}
 
 
@@ -105,13 +111,16 @@ def vn(t: datetime) -> str:
     return t.astimezone(VN).strftime("%d/%m %H:%M")
 
 
-def run(sym: str, confirm: str | None, data_dir: Path, min_score: int) -> dict:
+def run(sym: str, confirm: str | None, data_dir: Path, min_score: int,
+        cost: float | None = None) -> dict:
     market = Market(data_dir, sym, confirm)
-    client = BacktestClient(market)
+    client = BacktestClient(market, DEFAULT_COST.get(sym, 0.0) if cost is None else cost)
     cfg = Config.from_env()
     cfg.symbol, cfg.confirm_symbol = sym, confirm
     cfg.dry_run, cfg.order_size, cfg.size_decimals, cfg.min_momentum = False, "1", 2, min_score
+    cfg.state_file = None
     bot = SMCBot(cfg, client)
+    bot.now = lambda: market.now
 
     reports = []
     real_analyze = smc_bot.analyze
@@ -198,9 +207,16 @@ def main() -> None:
     p.add_argument("--confirm")
     p.add_argument("--data", default="data")
     p.add_argument("--min-momentum", type=int, default=3)
+    p.add_argument("--cost", type=float, help="points per side (default: 1 tick)")
+    p.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
+                   help="override a rule in vestbot.smc, e.g. --set TP1_MIN_R=0.4")
     a = p.parse_args()
     logging.basicConfig(level=logging.WARNING)
-    summarize(run(a.symbol, a.confirm, Path(a.data), a.min_momentum))
+    import vestbot.smc as smc
+    for kv in a.set:
+        name, value = kv.split("=")
+        setattr(smc, name, type(getattr(smc, name))(value))
+    summarize(run(a.symbol, a.confirm, Path(a.data), a.min_momentum, a.cost))
 
 
 if __name__ == "__main__":
