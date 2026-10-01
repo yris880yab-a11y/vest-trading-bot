@@ -46,6 +46,10 @@ class Config:
     signing_private_key: str | None
 
     symbol: str
+    strategy: str
+    confirm_symbol: str | None
+    min_momentum: int
+    size_decimals: int
     interval: str
     fast_ema: int
     slow_ema: int
@@ -73,6 +77,10 @@ class Config:
             account_group=int(group) if group is not None else None,
             signing_private_key=_env("VEST_SIGNING_PRIVATE_KEY"),
             symbol=_env("BOT_SYMBOL", "BTC-PERP"),
+            strategy=(_env("BOT_STRATEGY", "smc") or "smc").lower(),
+            confirm_symbol=_env("BOT_CONFIRM_SYMBOL"),
+            min_momentum=int(_env("BOT_MIN_MOMENTUM", "3")),
+            size_decimals=int(_env("BOT_SIZE_DECIMALS", "4")),
             interval=_env("BOT_INTERVAL", "15m"),
             fast_ema=int(_env("BOT_FAST_EMA", "9")),
             slow_ema=int(_env("BOT_SLOW_EMA", "21")),
