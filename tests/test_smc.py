@@ -80,3 +80,16 @@ def test_wait_reasons():
     assert any("quá xa" in r for r in rep.reasons)
     rep = analyze(all_tf(short_setup_1m(push=(30560,))), min_score=5)
     assert any("momentum" in r for r in rep.reasons)
+
+
+def test_tp1_is_at_least_half_r():
+    rep = analyze(all_tf(short_setup_1m(push=(30560,))))
+    assert abs(rep.entry - rep.targets[0]) >= 0.5 * abs(rep.entry - rep.sl)
+
+
+def test_no_chasing_far_from_5m_mss(monkeypatch):
+    import vestbot.smc as smc
+    monkeypatch.setattr(smc, "MAX_CHASE_ATR15", 0.0)
+    rep = analyze(all_tf(short_setup_1m(push=(30560,))))
+    assert rep.decision.startswith("WAIT")
+    assert any("quá xa location" in r for r in rep.reasons)

@@ -57,3 +57,33 @@ def test_stop_loss_closes_everything_and_setup_not_retaken():
     move_to(client, 30558)
     bot.tick()  # same sweep/MSS -> must not re-enter
     assert bot.trade is None and len(client.orders) == 2
+
+
+def test_reclaim_trims_once_then_exits_runner():
+    from vestbot.smc import MSS, Report
+    from vestbot.smc_bot import Trade
+
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = SMCBot(make_cfg(dry_run=False, order_size="1", size_decimals=2), client)
+    bot.trade = Trade("SHORT", 30558, 30613, [30500.0, None, None, None], 1.0, ("k",))
+    up = MSS("LONG", 30540, 30535, 0, 30565, 1, True)
+    rep = Report("X", 30562, mss5=None, mss1=up)
+
+    bot.manage(rep)  # first reclaim before TP1 -> cut half, keep SL
+    assert client.orders[-1]["size"] == "0.50" and bot.trade.remaining == 0.5
+    bot.manage(rep)  # same MSS again -> nothing new
+    assert len(client.orders) == 1
+    rep.mss1 = MSS("LONG", 30545, 30540, 2, 30570, 3, True)
+    bot.manage(rep)  # a fresh reclaim -> exit the rest
+    assert bot.trade is None and client.orders[-1]["size"] == "0.50"
+
+
+def test_opposite_5m_mss_exits_everything():
+    from vestbot.smc import MSS, Report
+    from vestbot.smc_bot import Trade
+
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = SMCBot(make_cfg(dry_run=False, order_size="1", size_decimals=2), client)
+    bot.trade = Trade("SHORT", 30558, 30613, [30500.0, None, None, None], 1.0, ("k",))
+    bot.manage(Report("X", 30562, mss5=MSS("LONG", 30540, 30535, 0, 30565, 1, True)))
+    assert bot.trade is None and client.orders[-1]["size"] == "1.00"

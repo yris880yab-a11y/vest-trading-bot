@@ -4,7 +4,8 @@ Trade management:
 * TP1 hit  -> close 50%, stop to break-even.
 * TP2 hit  -> close half of the rest, stop to TP1.
 * TP3 hit  -> close half of the rest (runner keeps going) or everything if no runner target.
-* Runner target, stop-loss, or an opposite 1M MSS (structure reclaimed) -> close everything.
+* Opposite 1M MSS (structure reclaimed): before TP1 -> cut half once; after that -> exit the rest.
+* Opposite 5M MSS, stop-loss or the runner target -> close everything.
 No adding to winners, no chasing: one entry per setup.
 """
 from __future__ import annotations
@@ -30,6 +31,8 @@ class Trade:
     remaining: float
     setup_key: tuple
     stage: int = 0  # number of targets already hit
+    trimmed: bool = False  # already cut half on a 1M reclaim
+    reclaim_key: tuple | None = None  # last opposite 1M MSS acted on
 
 
 class SMCBot(Bot):
@@ -108,9 +111,18 @@ class SMCBot(Bot):
         if sign * (price - t.sl) <= 0:
             self._reduce(1, price, f"SL {t.sl:,.2f}")
             return
+        m5 = rep.mss5
+        if m5 and m5.direction != t.side:
+            self._reduce(1, price, f"5M structure đảo chiều (MSS {m5.mss_level:,.2f})")
+            return
         m1 = rep.mss1
-        if m1 and m1.direction != t.side:
-            self._reduce(1, price, f"structure reclaim ngược (1M MSS {m1.mss_level:,.2f})")
+        if m1 and m1.direction != t.side and (m1.mss_level, m1.sweep_price) != t.reclaim_key:
+            t.reclaim_key = (m1.mss_level, m1.sweep_price)
+            if t.stage == 0 and not t.trimmed:
+                t.trimmed = True
+                self._reduce(0.5, price, f"1M reclaim ngược {m1.mss_level:,.2f} — giảm vị thế")
+            else:
+                self._reduce(1, price, f"1M reclaim ngược {m1.mss_level:,.2f} — thoát runner")
             return
 
         tp = t.targets[t.stage] if t.stage < len(t.targets) else None

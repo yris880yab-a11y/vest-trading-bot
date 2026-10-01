@@ -18,6 +18,10 @@ from typing import Any, Literal
 Dir = Literal["LONG", "SHORT"]
 TIMEFRAMES = ("1d", "4h", "1h", "15m", "5m", "1m")
 
+# Rules that turn the discretionary framework into numbers (tune here).
+TP1_MIN_R = 0.5        # liquidity closer than this (in R) is noise, not a target
+MAX_CHASE_ATR15 = 1.5  # entry may be at most this many 15M ATRs past the 5M MSS level
+
 
 # --------------------------------------------------------------------------- data
 @dataclass(frozen=True)
@@ -431,6 +435,10 @@ def analyze(data: dict[str, list[Candle]], symbol: str = "",
     elif not hit and not good_side:
         why.append("chưa ở location 15M")
 
+    sign = 1 if direction == "LONG" else -1
+    if sign * (price - m5.mss_level) > MAX_CHASE_ATR15 * a15:
+        why.append(f"giá đã chạy quá xa location (> {MAX_CHASE_ATR15} ATR 15M từ MSS 5M)")
+
     # 5) 1M trigger: sweep -> MSS -> retest -----------------------------------------
     m1c = closed["1m"]
     m1 = find_mss(m1c, lookback=45)
@@ -484,9 +492,10 @@ def analyze(data: dict[str, list[Candle]], symbol: str = "",
         unswept_levels(h1, kind) + unswept_levels(closed["4h"], kind),
         unswept_levels(closed["1d"], kind),
     ]
-    rep.targets = _targets(direction, price, tiers, 0.25 * a1)
+    risk = abs(price - rep.sl)
+    rep.targets = _targets(direction, price, tiers, max(0.25 * a1, TP1_MIN_R * risk))
     if rep.targets[0] is None:
-        why.append("không có liquidity target phía trước")
+        why.append(f"không có liquidity target ≥ {TP1_MIN_R}R phía trước")
 
     if not why:
         rep.decision = direction
