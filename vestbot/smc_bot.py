@@ -75,6 +75,7 @@ class SMCBot(Bot):
         self.day_pnl_usd = 0.0
         self.total_pnl_usd = 0.0
         self.day_start_balance: float | None = None
+        self.peak_eod_balance: float | None = None
         self.notifier = Notifier(cfg.telegram_token, cfg.telegram_chat_id)
         self.load_state()
 
@@ -83,8 +84,9 @@ class SMCBot(Bot):
         return datetime.now(timezone.utc)
 
     def session_day(self) -> str:
-        if self.cfg.day_reset == "cme":  # CME day starts 22:00 UTC
-            return (self.now() + timedelta(hours=2)).date().isoformat()
+        if self.cfg.day_reset == "cme":  # CME/Topstep day starts 5:00 PM Chicago
+            ct = self.now().astimezone(ZoneInfo("America/Chicago"))
+            return (ct + timedelta(hours=7)).date().isoformat()
         ny = self.now().astimezone(ZoneInfo("America/New_York"))  # Vest Capital: 8:00 PM ET
         return (ny + timedelta(hours=4)).date().isoformat()
 
@@ -96,16 +98,42 @@ class SMCBot(Bot):
 
     @property
     def daily_limit_usd(self) -> float | None:
+        """Firm's daily loss limit in USD (fixed amount or % of the day's starting balance)."""
         if not self.cfg.account_size:
+            return None
+        if self.cfg.prop_daily_loss_usd:
+            return self.cfg.prop_daily_loss_usd
+        if self.cfg.prop_daily_loss_pct <= 0:
             return None
         base = self.day_start_balance if self.day_start_balance is not None else self.balance
         return base * self.cfg.prop_daily_loss_pct / 100
 
     @property
-    def floor_usd(self) -> float | None:
+    def max_loss_usd(self) -> float | None:
         if not self.cfg.account_size:
             return None
-        return self.cfg.account_size * (1 - self.cfg.prop_max_dd_pct / 100)
+        if self.cfg.prop_max_loss_usd:
+            return self.cfg.prop_max_loss_usd
+        return self.cfg.account_size * self.cfg.prop_max_dd_pct / 100
+
+    @property
+    def floor_usd(self) -> float | None:
+        """Balance the account must stay above: static, or trailing the best end-of-day
+        balance (Topstep) until it reaches the starting balance."""
+        if not self.cfg.account_size:
+            return None
+        if self.cfg.prop_trailing == "eod":
+            peak = max(self.peak_eod_balance or self.cfg.account_size, self.cfg.account_size)
+            return min(peak - self.max_loss_usd, self.cfg.account_size)
+        return self.cfg.account_size - self.max_loss_usd
+
+    def in_flatten_window(self) -> bool:
+        """Topstep: be flat by 3:10 PM Chicago until the 5:00 PM session reset."""
+        if not self.cfg.flatten_time_ct:
+            return False
+        ct = self.now().astimezone(ZoneInfo("America/Chicago"))
+        hh, mm = (int(x) for x in self.cfg.flatten_time_ct.split(":"))
+        return (hh, mm) <= (ct.hour, ct.minute) < (17, 0)
 
     def load_state(self) -> None:
         path = self.cfg.state_file
@@ -118,6 +146,7 @@ class SMCBot(Bot):
         self.day_pnl_usd = d.get("day_pnl_usd", 0.0)
         self.total_pnl_usd = d.get("total_pnl_usd", 0.0)
         self.day_start_balance = d.get("day_start_balance")
+        self.peak_eod_balance = d.get("peak_eod_balance")
         log.info("Loaded state: trade=%s day=%s R=%.2f trades=%s", self.trade, self.day,
                  self.day_r, self.day_trades)
 
@@ -127,16 +156,20 @@ class SMCBot(Bot):
         d = {"trade": asdict(self.trade) if self.trade else None, "last_setup": self.last_setup,
              "day": self.day, "day_r": self.day_r, "day_trades": self.day_trades,
              "day_pnl_usd": self.day_pnl_usd, "total_pnl_usd": self.total_pnl_usd,
-             "day_start_balance": self.day_start_balance}
+             "day_start_balance": self.day_start_balance,
+             "peak_eod_balance": self.peak_eod_balance}
         tmp = Path(self.cfg.state_file).with_suffix(".tmp")
         tmp.write_text(json.dumps(d, indent=2))
         tmp.replace(self.cfg.state_file)
 
     def start(self) -> None:
-        if self.cfg.account_size and not self.cfg.dry_run:
+        if self.cfg.broker == "vest" and self.cfg.account_size and not self.cfg.dry_run:
             raise RuntimeError(
                 "Vest Capital không cho dùng bot đặt lệnh: với BOT_ACCOUNT_SIZE (tài khoản funded)"
                 " phải giữ BOT_DRY_RUN=true và dùng Telegram để tự vào lệnh bằng tay.")
+        if self.cfg.broker == "topstep" and not self.cfg.dry_run:
+            log.warning("Topstep: chỉ chạy bot trên máy cá nhân của bạn (cấm VPS/VPN/server) và"
+                        " không dùng cho tài khoản Live Funded.")
         super().start()
         if self.trade and not self.cfg.dry_run and self.position is None:
             log.warning("Saved trade %s has no position on the exchange — dropping it", self.trade)
@@ -150,6 +183,8 @@ class SMCBot(Bot):
         if day != self.day:
             self.day, self.day_r, self.day_trades, self.day_pnl_usd = day, 0.0, 0, 0.0
             self.day_start_balance = self.balance
+            if self.balance is not None:
+                self.peak_eod_balance = max(self.peak_eod_balance or self.balance, self.balance)
             self.save_state()
 
     def risk_block(self, rep: Report | None = None) -> str | None:
@@ -161,12 +196,12 @@ class SMCBot(Bot):
             return None
         if self.cfg.profit_target_usd and self.total_pnl_usd >= self.cfg.profit_target_usd:
             return f"đã đạt mục tiêu lợi nhuận ${self.total_pnl_usd:,.2f} — ngừng giao dịch"
-        risk = self.position_size(rep) * abs(rep.price - rep.sl) if rep else 0.0
-        limit = self.daily_limit_usd * self.cfg.prop_safety
-        if -self.day_pnl_usd + risk > limit:
+        risk = self.position_size(rep) * abs(rep.price - rep.sl) * self.cfg.point_value if rep else 0.0
+        daily = self.daily_limit_usd
+        if daily is not None and -self.day_pnl_usd + risk > daily * self.cfg.prop_safety:
             return (f"lệnh mới rủi ro ${risk:,.2f} sẽ vượt {self.cfg.prop_safety:.0%} giới hạn lỗ ngày"
-                    f" (đã lỗ ${-self.day_pnl_usd:,.2f}/${self.daily_limit_usd:,.2f})")
-        buffer = (1 - self.cfg.prop_safety) * (self.cfg.account_size - self.floor_usd)
+                    f" (đã lỗ ${-self.day_pnl_usd:,.2f}/${daily:,.2f})")
+        buffer = (1 - self.cfg.prop_safety) * self.max_loss_usd
         if self.balance - risk < self.floor_usd + buffer:
             return (f"lệnh mới có thể đưa tài khoản xuống gần mức sàn ${self.floor_usd:,.2f}"
                     f" (số dư ${self.balance:,.2f})")
@@ -178,10 +213,11 @@ class SMCBot(Bot):
         if not self.cfg.account_size or t is None:
             return None
         sign = 1 if t.side == "LONG" else -1
-        unreal = sign * (price - t.entry) * t.remaining
-        if -(self.day_pnl_usd + unreal) >= 0.9 * self.daily_limit_usd:
+        unreal = sign * (price - t.entry) * t.remaining * self.cfg.point_value
+        daily = self.daily_limit_usd
+        if daily is not None and -(self.day_pnl_usd + unreal) >= 0.9 * daily:
             return "lỗ trong ngày (kể cả chưa chốt) chạm 90% giới hạn của quỹ"
-        if self.balance + unreal <= self.floor_usd + 0.1 * (self.cfg.account_size - self.floor_usd):
+        if self.balance + unreal <= self.floor_usd + 0.1 * self.max_loss_usd:
             return "equity gần chạm mức sàn drawdown của quỹ"
         return None
 
@@ -204,6 +240,10 @@ class SMCBot(Bot):
         else:
             log.info("%s %s | %s", self.cfg.symbol, f"{rep.price:,.2f}", rep.decision)
 
+        if self.in_flatten_window():
+            if self.trade:
+                self._reduce(1, rep.price, f"đóng trước {self.cfg.flatten_time_ct} giờ Chicago (luật Topstep)")
+            return
         if self.trade:
             self.manage(rep)
             return
@@ -230,9 +270,11 @@ class SMCBot(Bot):
         P&L = size x price move), capped by BOT_MAX_NOTIONAL_USD."""
         if not self.cfg.risk_usd:
             return float(self.cfg.order_size)
-        size = self.cfg.risk_usd / abs(rep.price - rep.sl)
+        size = self.cfg.risk_usd / (abs(rep.price - rep.sl) * self.cfg.point_value)
         if self.cfg.max_notional_usd:
-            size = min(size, self.cfg.max_notional_usd / rep.price)
+            size = min(size, self.cfg.max_notional_usd / (rep.price * self.cfg.point_value))
+        if self.cfg.max_contracts:
+            size = min(size, self.cfg.max_contracts)
         return float(self._fmt(size))
 
     def alert_entry(self, rep: Report, size: float) -> None:
@@ -241,7 +283,7 @@ class SMCBot(Bot):
         lines = [
             f"{rep.direction} {self.cfg.symbol} — vào lệnh MARKET ngay",
             f"Giá hiện tại: {f(rep.price)}",
-            f"Khối lượng: {self._fmt(size)} (1R = ${size * abs(rep.price - rep.sl):,.2f})",
+            f"Khối lượng: {self._fmt(size)} (1R = ${size * abs(rep.price - rep.sl) * self.cfg.point_value:,.2f})",
             f"SL: {f(rep.sl)}",
             "TP1/TP2/TP3: " + " / ".join(f(t) for t in rep.targets[:3]),
             f"Target xa: {f(rep.targets[3])}",
@@ -264,7 +306,7 @@ class SMCBot(Bot):
             log.warning("Khối lượng tính ra = 0 (rủi ro quá nhỏ so với SL) — bỏ qua lệnh")
             return
         log.info("ENTRY %s %s @ %.2f SL %.2f (1R = $%.2f) targets %s", rep.direction,
-                 self._fmt(size), rep.price, rep.sl, size * abs(rep.price - rep.sl), rep.targets)
+                 self._fmt(size), rep.price, rep.sl, size * abs(rep.price - rep.sl) * self.cfg.point_value, rep.targets)
         self.alert_entry(rep, size)
         self._market(is_buy=rep.direction == "LONG", size=self._fmt(size), price=rep.price,
                      reduce_only=False)
@@ -286,7 +328,7 @@ class SMCBot(Bot):
         self._market(is_buy=t.side == "SHORT", size=self._fmt(qty), price=price, reduce_only=True)
         sign = 1 if t.side == "LONG" else -1
         r = sign * (price - t.entry) * qty / (t.risk * t.size) if t.risk and t.size else 0.0
-        usd = sign * (price - t.entry) * qty
+        usd = sign * (price - t.entry) * qty * self.cfg.point_value
         t.pnl_r += r
         t.pnl_usd += usd
         self.day_r += r

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import argparse
 
-from .client import VestClient
+from .bot import make_client
 from .config import Config
 from .smc import TIMEFRAMES, analyze, parse_candles
 from .smc_bot import KLINE_LIMITS
@@ -20,7 +20,7 @@ def main() -> None:
                    help="symbol used for market confirmation, e.g. ES for NQ")
     args = p.parse_args()
 
-    client = VestClient(cfg.rest_url, account_group=cfg.account_group)
+    client = make_client(cfg)
     data = {tf: parse_candles(client.klines(args.symbol, tf, limit=KLINE_LIMITS[tf]))
             for tf in TIMEFRAMES}
     confirm = (parse_candles(client.klines(args.confirm, "1m", limit=60))

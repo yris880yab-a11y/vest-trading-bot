@@ -79,6 +79,15 @@ Chiến lược EMA crossover cũ vẫn dùng được với `BOT_STRATEGY=ema`.
 
 Nếu tài khoản không được dùng API/bot, để `BOT_DRY_RUN=true` và điền `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Bot không đặt lệnh, chỉ nhắn: vào lệnh (hướng, giá, khối lượng, SL, TP1/2/3), chạm TP và chốt bao nhiêu, dời SL, thoát lệnh. Bạn tự bấm lệnh trên web Vest. Không cần API key, vì dữ liệu nến là dữ liệu công khai.
 
+### Topstep (TopstepX)
+
+Đặt `BOT_BROKER=topstep` để bot giao dịch qua API của TopstepX (ProjectX). Xem khối cấu hình mẫu ở cuối `.env.example`.
+
+- Topstep cho dùng bot qua API, nhưng **lệnh phải đặt từ máy cá nhân** (cấm VPS/VPN/server), **không dùng cho Live Funded**, cấm HFT. API của ProjectX tính phí hằng tháng.
+- Khối lượng = số hợp đồng nguyên, tính từ `BOT_RISK_USD / (khoảng cách SL × BOT_POINT_VALUE)`, tối đa `BOT_MAX_CONTRACTS`.
+- `BOT_PROP_MAX_LOSS_USD` + `BOT_PROP_TRAILING=eod`: Maximum Loss Limit trailing theo số dư cuối ngày, dừng ở số dư ban đầu.
+- `BOT_FLATTEN_TIME_CT=15:08`: đóng hết lệnh và không vào lệnh mới từ 3:08 PM tới 5:00 PM giờ Chicago.
+
 ## Backtest
 
 Phát lại dữ liệu từng phút qua đúng code bot (không nhìn trước tương lai, có tính 1 tick phí + trượt giá mỗi chiều):

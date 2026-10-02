@@ -34,15 +34,20 @@ def _find_position(account: Any, symbol: str) -> Position | None:
     return None
 
 
+def make_client(cfg: Config):
+    """Exchange client for ``BOT_BROKER``: vest (default) or topstep."""
+    if cfg.broker == "topstep":
+        from .topstep import TopstepClient
+        return TopstepClient(cfg.topstep_url, cfg.topstep_username, cfg.topstep_api_key,
+                             cfg.topstep_account)
+    return VestClient(cfg.rest_url, api_key=cfg.api_key, account_group=cfg.account_group,
+                      signing_private_key=cfg.signing_private_key)
+
+
 class Bot:
-    def __init__(self, cfg: Config, client: VestClient | None = None):
+    def __init__(self, cfg: Config, client=None):
         self.cfg = cfg
-        self.client = client or VestClient(
-            cfg.rest_url,
-            api_key=cfg.api_key,
-            account_group=cfg.account_group,
-            signing_private_key=cfg.signing_private_key,
-        )
+        self.client = client or make_client(cfg)
         self.position: Position | None = None
         self.last_signal_candle: object = None
 

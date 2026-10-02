@@ -61,6 +61,17 @@ class Config:
     prop_safety: float
     profit_target_usd: float | None
     telegram_token: str | None
+    broker: str
+    topstep_url: str
+    topstep_username: str | None
+    topstep_api_key: str | None
+    topstep_account: str | None
+    point_value: float
+    max_contracts: float | None
+    prop_daily_loss_usd: float | None
+    prop_max_loss_usd: float | None
+    prop_trailing: str
+    flatten_time_ct: str | None
     telegram_chat_id: str | None
     state_file: str | None
     interval: str
@@ -105,6 +116,17 @@ class Config:
             prop_safety=float(_env("BOT_PROP_SAFETY", "0.75")),
             profit_target_usd=float(v) if (v := _env("BOT_PROFIT_TARGET_USD")) else None,
             telegram_token=_env("TELEGRAM_BOT_TOKEN"),
+            broker=(_env("BOT_BROKER", "vest") or "vest").lower(),
+            topstep_url=_env("TOPSTEP_API_URL", "https://api.topstepx.com"),
+            topstep_username=_env("TOPSTEP_USERNAME"),
+            topstep_api_key=_env("TOPSTEP_API_KEY"),
+            topstep_account=_env("TOPSTEP_ACCOUNT"),
+            point_value=float(_env("BOT_POINT_VALUE", "1")),
+            max_contracts=float(v) if (v := _env("BOT_MAX_CONTRACTS")) else None,
+            prop_daily_loss_usd=float(v) if (v := _env("BOT_PROP_DAILY_LOSS_USD")) else None,
+            prop_max_loss_usd=float(v) if (v := _env("BOT_PROP_MAX_LOSS_USD")) else None,
+            prop_trailing=(_env("BOT_PROP_TRAILING", "static") or "static").lower(),
+            flatten_time_ct=_env("BOT_FLATTEN_TIME_CT"),
             telegram_chat_id=_env("TELEGRAM_CHAT_ID"),
             state_file=_env("BOT_STATE_FILE", "bot_state.json"),
             interval=_env("BOT_INTERVAL", "15m"),
@@ -120,6 +142,10 @@ class Config:
         )
 
     def require_credentials(self) -> None:
+        if self.broker == "topstep":
+            if not (self.topstep_username and self.topstep_api_key):
+                raise RuntimeError("Missing TOPSTEP_USERNAME / TOPSTEP_API_KEY in .env")
+            return
         missing = [
             name
             for name, value in (
