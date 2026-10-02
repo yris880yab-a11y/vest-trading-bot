@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import pytest
 
 from test_bot import make_cfg
 
@@ -320,3 +321,70 @@ def test_blackout_blocks_entries_and_closes_open_trade():
     bot.params = replace(bot.params, blackout=window)
     bot.tick()
     assert bot.trade is None
+
+
+class OcoFeed(Feed):
+    """TopstepX with Auto-OCO: the entry order creates a stop + target pair."""
+
+    def __init__(self, *a):
+        super().__init__(*a)
+        self.legs, self.modified, self.cancelled = {}, [], []
+
+    def place_order(self, **kw):
+        out = super().place_order(**kw)
+        if kw.get("brackets"):
+            sl, tp = kw["brackets"]
+            self.legs = {201: {"type": 4, "ticks": sl, "size": kw["size"]},
+                         202: {"type": 1, "ticks": tp, "size": kw["size"]}}
+        return out
+
+    def bracket_ids(self, symbol):
+        ids = {v["type"]: k for k, v in self.legs.items()}
+        return ids.get(4), ids.get(1)
+
+    def modify_order(self, order_id, *, size=None, stop_price=None, limit_price=None):
+        self.modified.append((order_id, size, stop_price))
+        if size is not None:
+            self.legs[order_id]["size"] = size
+        if stop_price is not None:
+            self.legs[order_id]["stop"] = stop_price
+
+    def cancel_all(self, symbol):
+        self.cancelled += list(self.legs)
+        self.legs = {}
+
+
+def test_oco_entry_carries_brackets_and_bot_edits_them():
+    feed = OcoFeed(*burst(+1))
+    bot = bot_for(feed, topstep_oco=True)
+    bot.tick()
+    t = bot.trade
+    assert t is not None and feed.stops == {}            # no separate stop order
+    entry = feed.orders[0]
+    sl_ticks, tp_ticks = entry["brackets"]
+    assert sl_ticks == pytest.approx((t.entry - t.sl) / 0.25)
+    assert tp_ticks == pytest.approx((t.targets[1] - t.entry) / 0.25)
+    assert (t.stop_id, t.tp_id) == (201, 202)
+
+    feed.set_price(t.targets[0] + 0.25)                  # scalp: half off, stop to break-even
+    bot.tick()
+    assert bot.trade.stage == 1 and bot.trade.remaining == 1
+    assert feed.legs[201]["size"] == "1" and feed.legs[202]["size"] == "1"
+    assert feed.legs[201]["stop"] == t.entry + 0.25
+    assert feed.stops == {}
+
+    bot._exit(1, t.entry + 5, "test")                    # full exit clears both legs
+    assert bot.trade is None and feed.legs == {} and 201 in feed.cancelled
+
+
+def test_oco_target_fill_is_booked_at_the_target():
+    feed = OcoFeed(*burst(+1))
+    bot = bot_for(feed, topstep_oco=True, momo={"scalp_tp": 1000})
+    bot.tick()
+    t = bot.trade
+    target = t.targets[1]
+    feed.pos = 0                                          # exchange filled the TP leg
+    feed.legs.pop(202)
+    feed.set_price(target - 0.5)
+    bot.tick()
+    assert bot.trade is None and bot.day_r > 0

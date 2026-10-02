@@ -100,6 +100,20 @@ Lưu ý khi chạy thật:
 - Đừng tự bấm lệnh MNQ/MGC trên TopstepX khi bot đang chạy (bot thấy vị thế lạ sẽ không vào lệnh mới).
 - Sau khi tắt bot luôn kiểm tra TopstepX xem còn vị thế / lệnh chờ nào không.
 
+
+### Auto-OCO (bắt buộc khi dùng bot trên TopstepX)
+
+Bật **Auto-OCO brackets** trong TopstepX (Settings → Risk/Brackets). Với `TOPSTEP_OCO=true` (mặc định), mỗi lệnh vào là lệnh market **kèm cặp OCO**: SL (lệnh Stop) và TP (lệnh Limit) tính bằng tick có dấu (LONG: SL âm, TP dương; SHORT: ngược lại). Sau đó bot **sửa chính 2 lệnh OCO** này:
+
+| Sự kiện | Bot làm |
+|---|---|
+| Chạm mức chốt 1/2 | giảm khối lượng 2 lệnh OCO trước, rồi đóng 1/2, dời SL về hoà vốn |
+| Trail | sửa giá lệnh SL của OCO |
+| Thoát sớm (momentum tắt, quá 15 phút, giờ ra tin, 3:08 PM) | huỷ OCO rồi đóng hết |
+| SL hoặc TP khớp trên sàn | ghi nhận lệnh đóng, huỷ lệnh còn lại nếu còn |
+
+Lệnh đầu tiên khi chạy thật: mở TopstepX kiểm tra có **đúng 1 lệnh Stop + 1 lệnh Limit** đi kèm vị thế, và sau khi chốt 1/2 thì cả hai còn đúng nửa khối lượng.
+
 ## Thông số chính (đã cài sẵn — chỉ chỉnh khi cần)
 
 | Biến | NQ | GC | Ý nghĩa |

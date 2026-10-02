@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 # timeframe -> (unit, unitNumber, minutes per bar); units: 2 = minute, 3 = hour, 4 = day
 TIMEFRAMES = {"1m": (2, 1, 1), "5m": (2, 5, 5), "15m": (2, 15, 15),
               "1h": (3, 1, 60), "4h": (3, 4, 240), "1d": (4, 1, 1440)}
-MARKET, STOP, BUY, SELL = 2, 4, 0, 1
+LIMIT, MARKET, STOP, BUY, SELL = 1, 2, 4, 0, 1
 TOKEN_TTL = 23 * 3600  # tokens last 24h; refresh a bit earlier
 
 
@@ -124,15 +124,53 @@ class TopstepClient:
 
     def place_order(self, *, symbol: str, is_buy: bool, size: str, order_type: str = "MARKET",
                     limit_price: str | None = None, reduce_only: bool = False,
-                    nonce: int | None = None) -> Any:
+                    nonce: int | None = None, brackets: tuple[int, int] | None = None) -> Any:
+        """Market order. ``brackets`` = (SL ticks, TP ticks) away from the fill, both positive:
+        attached as an OCO pair (needed when Auto-OCO brackets are on for the account)."""
         qty = int(float(size))
         account, contract = self.resolve_account(), self.contract_id(symbol)
         if reduce_only:
             return self._post("/api/Position/partialCloseContract",
                               {"accountId": account, "contractId": contract, "size": qty})
-        return self._post("/api/Order/place", {"accountId": account, "contractId": contract,
-                                               "type": MARKET, "side": BUY if is_buy else SELL,
-                                               "size": qty})
+        body = {"accountId": account, "contractId": contract, "type": MARKET,
+                "side": BUY if is_buy else SELL, "size": qty}
+        if brackets:
+            # ticks are signed by direction: a long's stop is below (-), its target above (+)
+            sign = 1 if is_buy else -1
+            sl_ticks, tp_ticks = (max(1, int(round(x))) for x in brackets)
+            body["stopLossBracket"] = {"ticks": -sign * sl_ticks, "type": STOP}
+            body["takeProfitBracket"] = {"ticks": sign * tp_ticks, "type": LIMIT}
+        return self._post("/api/Order/place", body)
+
+    def open_orders(self, symbol: str) -> list[dict]:
+        cid = self.contract_id(symbol)
+        orders = self._post("/api/Order/searchOpen", {"accountId": self.resolve_account()})["orders"]
+        return [o for o in orders if o.get("contractId") == cid]
+
+    def bracket_ids(self, symbol: str) -> tuple[int | None, int | None]:
+        """(stop order id, take-profit order id) resting on this contract, if any."""
+        stop = tp = None
+        for o in self.open_orders(symbol):
+            if o.get("type") == STOP and stop is None:
+                stop = int(o["id"])
+            elif o.get("type") == LIMIT and tp is None:
+                tp = int(o["id"])
+        return stop, tp
+
+    def modify_order(self, order_id: int, *, size: str | None = None,
+                     stop_price: float | None = None, limit_price: float | None = None) -> None:
+        body: dict = {"accountId": self.resolve_account(), "orderId": order_id}
+        if size is not None:
+            body["size"] = int(float(size))
+        if stop_price is not None:
+            body["stopPrice"] = stop_price
+        if limit_price is not None:
+            body["limitPrice"] = limit_price
+        self._post("/api/Order/modify", body)
+
+    def cancel_all(self, symbol: str) -> None:
+        for o in self.open_orders(symbol):
+            self.cancel_order(int(o["id"]))
 
     def place_stop(self, *, symbol: str, is_buy: bool, size: str, stop_price: float) -> int:
         """Resting stop order on the exchange: protects the trade between polls."""

@@ -148,3 +148,22 @@ def test_balance_read_from_accounts():
     c = client()
     c.session.accounts = [{"id": 7, "name": "50KTC-1", "balance": 50123.5}]
     assert c.balance() == 50123.5
+
+
+def test_market_order_with_signed_oco_brackets():
+    c = client()
+    c.place_order(symbol="MNQ", is_buy=True, size="11", brackets=(53, 42))
+    body = c.session.calls[-1][1]
+    assert body["stopLossBracket"] == {"ticks": -53, "type": 4}
+    assert body["takeProfitBracket"] == {"ticks": 42, "type": 1}
+    c.place_order(symbol="MNQ", is_buy=False, size="3", brackets=(20.4, 30.6))
+    body = c.session.calls[-1][1]
+    assert body["stopLossBracket"]["ticks"] == 20 and body["takeProfitBracket"]["ticks"] == -31
+
+
+def test_modify_order_sends_only_given_fields():
+    c = client()
+    c.modify_order(5, size="2", stop_price=30001.25)
+    path, body, _ = c.session.calls[-1]
+    assert path == "/api/Order/modify"
+    assert body == {"accountId": 7, "orderId": 5, "size": 2, "stopPrice": 30001.25}

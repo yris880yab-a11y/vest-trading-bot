@@ -35,10 +35,41 @@ class MomentumBot(SMCBot):
     def _can_stop(self) -> bool:
         return not self.cfg.dry_run and hasattr(self.client, "place_stop")
 
+    def _oco(self) -> bool:
+        """TopstepX with Auto-OCO: the entry carries the stop and target, the bot edits them."""
+        return (self._can_stop() and getattr(self.cfg, "topstep_oco", False)
+                and hasattr(self.client, "bracket_ids"))
+
+    def _attach_brackets(self) -> None:
+        """Find the OCO legs the exchange created for the open trade."""
+        t = self.trade
+        try:
+            t.stop_id, t.tp_id = self.client.bracket_ids(self.cfg.symbol)
+        except Exception as e:
+            log.warning("Không đọc được lệnh OCO: %s", e)
+            return
+        if t.stop_id is None:
+            log.warning("Chưa thấy lệnh SL của OCO trên sàn — bot vẫn tự theo dõi SL")
+        self.save_state()
+
     def _place_stop(self) -> None:
         t = self.trade
         if t is None or not self._can_stop():
             return
+        if self._oco():
+            if t.stop_id is None:
+                self._attach_brackets()
+            if t.stop_id is not None:
+                try:  # move the OCO stop and keep both legs at the open size
+                    self.client.modify_order(t.stop_id, size=self._fmt(t.remaining),
+                                             stop_price=self._round(t.sl))
+                    if t.tp_id is not None:
+                        self.client.modify_order(t.tp_id, size=self._fmt(t.remaining))
+                    self.save_state()
+                    return
+                except Exception as e:
+                    log.warning("Không sửa được lệnh OCO (%s) — huỷ và đặt stop mới", e)
+                    self._cancel_protection()
         if t.stop_id is not None:
             self.client.cancel_order(t.stop_id)
             t.stop_id = None
@@ -50,13 +81,34 @@ class MomentumBot(SMCBot):
             log.warning("Không đặt được stop trên sàn: %s", e)
         self.save_state()
 
+    def _cancel_protection(self) -> None:
+        t = self.trade
+        if self._oco():
+            try:
+                self.client.cancel_all(self.cfg.symbol)
+            except Exception as e:
+                log.warning("Không huỷ được lệnh chờ: %s", e)
+        elif t and t.stop_id is not None:
+            self.client.cancel_order(t.stop_id)
+        if t:
+            t.stop_id = t.tp_id = None
+
     def _exit(self, fraction: float, price: float, reason: str) -> None:
         t = self.trade
-        if t and t.stop_id is not None and self._can_stop():
-            self.client.cancel_order(t.stop_id)
-            t.stop_id = None
+        full = fraction >= 1 or float(self._fmt(t.remaining * fraction)) >= t.remaining
+        if self._can_stop() and (full or not self._oco()):
+            self._cancel_protection()  # never leave a stop that could open a new position
+        elif self._oco() and t.stop_id is not None:
+            # shrink the OCO legs first so they never exceed the position
+            left = self._fmt(t.remaining - float(self._fmt(t.remaining * fraction)))
+            for oid in (t.stop_id, t.tp_id):
+                if oid is not None:
+                    try:
+                        self.client.modify_order(oid, size=left)
+                    except Exception as e:
+                        log.warning("Không giảm được khối lượng lệnh OCO %s: %s", oid, e)
         self._reduce(fraction, price, reason)
-        if self.trade:  # partial exit: re-arm the stop for what is left
+        if self.trade:  # partial exit: re-arm (or resize) the stop for what is left
             self._place_stop()
 
     # -------------------------------------------------------------------- loop
@@ -125,14 +177,25 @@ class MomentumBot(SMCBot):
         log.info("\n%s\nENTRY %s %s (1R = $%.2f)", sig.render(self.cfg.symbol), sig.direction,
                  self._fmt(size), size * abs(sig.price - sig.sl) * self.cfg.point_value)
         self.notifier.send(sig.render(self.cfg.symbol) + f"\nKhối lượng: {self._fmt(size)}")
-        self._market(is_buy=sig.direction == "LONG", size=self._fmt(size), price=sig.price,
-                     reduce_only=False)
+        is_buy = sig.direction == "LONG"
+        if self._oco():
+            tick = self.params.tick
+            ticks = (abs(sig.price - sig.sl) / tick, abs(sig.tp - sig.price) / tick)
+            resp = self.client.place_order(symbol=self.cfg.symbol, is_buy=is_buy,
+                                           size=self._fmt(size), brackets=ticks)
+            log.info("Lệnh + OCO (SL %d tick, TP %d tick): %s", round(ticks[0]), round(ticks[1]),
+                     resp)
+        else:
+            self._market(is_buy=is_buy, size=self._fmt(size), price=sig.price, reduce_only=False)
         self.trade = Trade(sig.direction, sig.price, sig.sl, [sig.scalp_tp, sig.tp, None, None],
                            size, key, risk=abs(sig.price - sig.sl), size=size,
                            opened_at=self.now().timestamp(), best=sig.price)
         self.day_trades += 1
         self.save_state()
-        self._place_stop()
+        if self._oco():
+            self._attach_brackets()
+        else:
+            self._place_stop()
 
     # -------------------------------------------------------------- management
     def manage_momo(self, price: float, c1) -> None:
@@ -140,12 +203,18 @@ class MomentumBot(SMCBot):
         p = self.params
         sign = 1 if t.side == "LONG" else -1
 
-        # the exchange stop already filled between polls
+        # the exchange stop (or the OCO target) already filled between polls
+        if self._oco() and t.stop_id is None:
+            self._attach_brackets()
         if t.stop_id is not None and self._can_stop() and hasattr(self.client, "position_size"):
             try:
                 if self.client.position_size(self.cfg.symbol) == 0:
-                    t.stop_id = None
-                    self._reduce(1, t.sl, f"stop trên sàn đã khớp {t.sl:,.2f}", send=False)
+                    target = t.targets[1]
+                    hit_tp = target is not None and abs(price - target) < abs(price - t.sl)
+                    px = target if hit_tp else t.sl
+                    self._cancel_protection()  # the other OCO leg, if still resting
+                    what = "chốt lời" if hit_tp else "stop"
+                    self._reduce(1, px, f"{what} trên sàn đã khớp {px:,.2f}", send=False)
                     return
             except Exception as e:
                 log.warning("Không kiểm tra được vị thế: %s", e)

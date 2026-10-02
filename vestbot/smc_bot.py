@@ -57,6 +57,7 @@ class Trade:
     opened_at: float | None = None  # epoch seconds (momentum time stop)
     best: float | None = None  # best price since entry (momentum trailing stop)
     stop_id: int | None = None  # protective stop order resting on the exchange
+    tp_id: int | None = None  # take-profit leg of an OCO bracket
 
     @classmethod
     def from_json(cls, d: dict) -> "Trade":

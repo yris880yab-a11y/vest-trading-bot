@@ -86,6 +86,7 @@ class Config:
     max_slippage_pct: float
     poll_seconds: int
     dry_run: bool
+    topstep_oco: bool = True  # TopstepX: entry carries an OCO stop/target pair
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -142,6 +143,7 @@ class Config:
             max_slippage_pct=float(_env("BOT_MAX_SLIPPAGE_PCT", "0.5")),
             poll_seconds=int(_env("BOT_POLL_SECONDS", "30")),
             dry_run=_bool("BOT_DRY_RUN", True),
+            topstep_oco=_bool("TOPSTEP_OCO", True),
         )
 
     def require_credentials(self) -> None:
