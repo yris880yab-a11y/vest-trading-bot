@@ -107,7 +107,7 @@ Lưu ý khi chạy thật:
 | `BOT_RISK_USD` | 100 | 100 | tiền rủi ro mỗi lệnh (1R) |
 | `BOT_MAX_CONTRACTS` | 25 | 25 | tối đa hợp đồng micro mỗi bot (Topstep 50K cho tổng 50) |
 | `BOT_MAX_DAILY_LOSS_R` | 3 | 3 | lỗ 3R trong ngày → ngừng vào lệnh (2 bot = tối đa ~$600/ngày) |
-| `BOT_MAX_TRADES_PER_DAY` | 15 | 15 | số lệnh tối đa mỗi ngày |
+| `BOT_MAX_TRADES_PER_DAY` | 0 | 0 | số lệnh tối đa mỗi ngày (0 = không giới hạn) |
 | `BOT_PROP_MAX_LOSS_USD` | 2000 | 2000 | MLL của Topstep 50K; bot chừa 25% an toàn (`BOT_PROP_SAFETY=0.75`) |
 | `BOT_PROFIT_TARGET_USD` | 3000 | 3000 | đạt mục tiêu Combine → ngừng |
 | `BOT_FLATTEN_TIME_CT` | 15:08 | 15:08 | đóng hết lệnh lúc 3:08 PM Chicago |

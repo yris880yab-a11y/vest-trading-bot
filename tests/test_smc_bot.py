@@ -116,6 +116,15 @@ def test_daily_loss_limit_blocks_new_entries():
     assert bot.trade is None and client.orders == []
 
 
+def test_zero_trade_limit_means_unlimited():
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = SMCBot(make_cfg(dry_run=False, order_size="1", size_decimals=2,
+                          max_trades_per_day=0), client)
+    bot._roll_day()
+    bot.day_trades = 500
+    assert bot.risk_block() is None
+
+
 def test_realized_r_is_tracked():
     client = FakeClient(short_setup_1m(push=(30560,)))
     bot = SMCBot(make_cfg(dry_run=False, order_size="1", size_decimals=2), client)
