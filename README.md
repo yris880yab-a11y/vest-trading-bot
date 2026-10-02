@@ -73,7 +73,7 @@ Chiến lược EMA crossover cũ vẫn dùng được với `BOT_STRATEGY=ema`.
 - Ngày reset lúc 8:00 PM giờ New York, giống Vest Capital.
 - `BOT_PROFIT_TARGET_USD`: evaluation đạt mục tiêu 10% thì ngừng giao dịch.
 
-Trước khi chạy, hỏi Vest xem tài khoản Vest Capital có cho dùng bot/API không: tài liệu công khai của họ chưa ghi rõ.
+**Vest Capital không cho dùng bot đặt lệnh.** Khi đặt `BOT_ACCOUNT_SIZE`, bot từ chối chạy nếu `BOT_DRY_RUN=false`: chỉ dùng chế độ báo lệnh qua Telegram và tự vào lệnh bằng tay.
 
 ### Không có API: chế độ báo lệnh qua Telegram
 

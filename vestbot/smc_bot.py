@@ -133,6 +133,10 @@ class SMCBot(Bot):
         tmp.replace(self.cfg.state_file)
 
     def start(self) -> None:
+        if self.cfg.account_size and not self.cfg.dry_run:
+            raise RuntimeError(
+                "Vest Capital không cho dùng bot đặt lệnh: với BOT_ACCOUNT_SIZE (tài khoản funded)"
+                " phải giữ BOT_DRY_RUN=true và dùng Telegram để tự vào lệnh bằng tay.")
         super().start()
         if self.trade and not self.cfg.dry_run and self.position is None:
             log.warning("Saved trade %s has no position on the exchange — dropping it", self.trade)

@@ -230,3 +230,12 @@ def test_notifier_never_raises(monkeypatch):
         raise requests.ConnectionError("offline")
     monkeypatch.setattr(requests, "post", boom)
     Notifier("t", "c").send("hi")  # logs a warning, does not raise
+
+
+def test_funded_account_never_trades_live():
+    import pytest
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = funded_bot(client)  # account_size set, dry_run False
+    with pytest.raises(RuntimeError, match="Vest Capital"):
+        bot.start()
+    assert client.orders == []
