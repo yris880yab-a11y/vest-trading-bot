@@ -51,13 +51,14 @@ def load(data_dir: Path, sym: str, tf: str) -> list[tuple[datetime, datetime, Ca
             if i + 1 < len(starts):
                 end = min(end, starts[i + 1])
         c = Candle(int(start.timestamp() * 1000), float(r["open"]), float(r["high"]),
-                   float(r["low"]), float(r["close"]))
+                   float(r["low"]), float(r["close"]), float(r.get("volume") or 0))
         out.append((start, end, c))
     return out
 
 
 def aggregate(parts: list[Candle], t: int) -> Candle:
-    return Candle(t, parts[0].o, max(x.h for x in parts), min(x.l for x in parts), parts[-1].c)
+    return Candle(t, parts[0].o, max(x.h for x in parts), min(x.l for x in parts), parts[-1].c,
+                  sum(x.v for x in parts))
 
 
 class Market:
@@ -107,7 +108,7 @@ class BacktestClient:
         self.stop: dict | None = None
 
     def klines(self, symbol, interval, limit=200):
-        return [[x.t, x.o, x.h, x.l, x.c, 0] for x in self.market.view(symbol, interval, limit)]
+        return [[x.t, x.o, x.h, x.l, x.c, x.v] for x in self.market.view(symbol, interval, limit)]
 
     def place_order(self, **kw):
         fill = self.price + (self.cost if kw["is_buy"] else -self.cost)
@@ -190,7 +191,8 @@ def run_momentum(sym: str, data_dir: Path, cost: float | None = None,
                 path = [path[0], path[2], path[1], path[3]]
             for k, px in enumerate(path):
                 market.now = s + timedelta(seconds=10 + 15 * k)
-                market.partial = Candle(c.t, c.o, max(path[:k + 1]), min(path[:k + 1]), px)
+                market.partial = Candle(c.t, c.o, max(path[:k + 1]), min(path[:k + 1]), px,
+                                        c.v * (k + 1) / 4)
                 before = len(client.orders)
                 client.move_price(px)
                 bot.tick()
@@ -326,7 +328,8 @@ def main() -> None:
         overrides = {}
         for kv in a.set:
             name, value = kv.split("=")
-            overrides[name.lower().removeprefix("momo_")] = float(value)
+            key = name.lower().removeprefix("momo_")
+            overrides[key] = value if key in ("entry_mode", "sessions") else float(value)
         summarize(run_momentum(a.symbol, Path(a.data), a.cost, overrides))
         return
     import vestbot.smc as smc

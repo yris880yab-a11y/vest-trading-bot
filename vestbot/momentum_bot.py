@@ -62,7 +62,9 @@ class MomentumBot(SMCBot):
     def tick(self) -> None:
         self.sync_balance()
         self._roll_day()
-        c1 = parse_candles(self.client.klines(self.cfg.symbol, "1m", limit=60))
+        # the volume profile of the rejection entry needs MOMO_VP_LOOKBACK minutes of 1M bars
+        n1 = int(self.params.vp_lookback) + 10 if "rejection" in self.params.entry_mode else 60
+        c1 = parse_candles(self.client.klines(self.cfg.symbol, "1m", limit=n1))
         c5 = parse_candles(self.client.klines(self.cfg.symbol, "5m", limit=60))
         c15 = parse_candles(self.client.klines(self.cfg.symbol, "15m", limit=60))
         price = c1[-1].c

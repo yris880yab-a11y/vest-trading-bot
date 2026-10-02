@@ -33,6 +33,7 @@ class Candle:
     h: float
     l: float  # noqa: E741
     c: float
+    v: float = 0.0  # volume (0 when the feed has none)
 
     @property
     def body(self) -> float:
@@ -51,15 +52,17 @@ def parse_candles(klines: Any) -> list[Candle]:
         if isinstance(r, dict):
             def g(*keys, r=r):
                 return next(r[k] for k in keys if k in r)
+            vol = next((r[k] for k in ("volume", "v") if k in r), 0) or 0
             out.append(Candle(g("openTime", "t"), float(g("open", "o")), float(g("high", "h")),
-                              float(g("low", "l")), float(g("close", "c"))))
+                              float(g("low", "l")), float(g("close", "c")), float(vol)))
         else:
-            out.append(Candle(r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4])))
+            vol = float(r[5] or 0) if len(r) > 5 else 0.0
+            out.append(Candle(r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4]), vol))
     return out
 
 
 def _mirror(c: list[Candle]) -> list[Candle]:
-    return [Candle(x.t, -x.o, -x.l, -x.h, -x.c) for x in c]
+    return [Candle(x.t, -x.o, -x.l, -x.h, -x.c, x.v) for x in c]
 
 
 # ---------------------------------------------------------------------- building blocks

@@ -212,3 +212,59 @@ def test_trend_filter_blocks_counter_trend():
                for i in range(30)]
     sig, why = momentum_signal(c1, c5, falling, MomoParams(trend_filter=1))
     assert sig is None and any("xu hướng" in w for w in why)
+
+
+def rejection_setup(wick_low=29980.0, vol=100.0, bounce=8.0):
+    """Heavy two-way trade around 29,980, then a 1M wick into it and a fast bounce."""
+    c1 = []
+    for i in range(120):  # chop around 29,980 with big volume -> high-volume level
+        p = 29980 + (2 if i % 2 else -2)
+        c1.append(Candle(i, p, p + 2, p - 2, p + (1 if i % 2 else -1), 500))
+    for i in range(120, 150):  # drift up to 30,010 on light volume
+        p = 29985 + (i - 120)
+        c1.append(Candle(i, p, p + 1.5, p - 0.5, p + 1, 50))
+    top = c1[-1].c
+    wick = Candle(150, top - 20, top - 19, wick_low, top - 21 + 4, vol)  # long lower wick, closes up
+    up1 = Candle(151, wick.c, wick.c + bounce / 2, wick.c - 0.5, wick.c + bounce / 2, 60)
+    up2 = Candle(152, up1.c, up1.c + 1, up1.c - 0.5, up1.c + 0.5, 60)
+    now = Candle(153, up2.c, wick_low + bounce + 1, up2.c - 0.5, wick_low + bounce, 20)
+    c1 += [wick, up1, up2, now]
+    c5 = quiet_5m(30, base=30000, size=10)
+    c15 = quiet_5m(30, base=30000, size=20)
+    return c1, c5, c15
+
+
+def test_volume_levels_find_the_busy_price():
+    from vestbot.momentum import volume_levels
+    c1, _, _ = rejection_setup()
+    levels = volume_levels(c1[:150], 5.0, 0.8)
+    assert any(abs(lv - 29980) <= 5 for lv in levels)
+
+
+def test_rejection_entry_after_wick_and_fast_bounce():
+    p = MomoParams(entry_mode="rejection")
+    sig, why = momentum_signal(*rejection_setup(), p)
+    assert sig is not None and sig.direction == "LONG", why
+    assert sig.sl < 29980.0 and any("vùng volume" in n for n in sig.notes)
+
+
+def test_rejection_needs_the_bounce_and_volume_when_asked():
+    sig, why = momentum_signal(*rejection_setup(bounce=3), MomoParams(entry_mode="rejection"))
+    assert sig is None and any("chưa bật" in w for w in why)
+    sig, why = momentum_signal(*rejection_setup(vol=10), MomoParams(entry_mode="rejection", vol_mult=1.5))
+    assert sig is None and any("râu" in w for w in why)
+
+
+def test_combined_modes_take_the_first_signal():
+    sig, _ = momentum_signal(*rejection_setup(), MomoParams(entry_mode="close,rejection"))
+    assert sig is not None and "rejection" in sig.notes[0]
+
+
+def test_rejection_bot_fetches_enough_1m_history():
+    feed = Feed(*burst(+1))
+    asked = []
+    real = feed.klines
+    feed.klines = lambda symbol, interval, limit: (asked.append((interval, limit)), real(symbol, interval, limit))[1]
+    bot = bot_for(feed, momo={"entry_mode": "rejection,close"})
+    bot.tick()
+    assert ("1m", 490) in asked

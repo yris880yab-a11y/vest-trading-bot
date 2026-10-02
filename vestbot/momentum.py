@@ -19,11 +19,14 @@ Stop = under the last two 1M lows, between ``min_sl`` and ``max_sl`` (wider = to
 * ``pullback``: wait for a 1M pullback of ``pb_min``-``pb_max`` of the impulse, enter when a
   1M candle breaks back above the pullback candle; stop under the pullback low;
 * ``breakout``: wait for a tight 1M pause (<= ``cons_max`` of the impulse) in the top half,
-  enter on the break of the pause high; stop under the pause.
+  enter on the break of the pause high; stop under the pause;
+* ``rejection``: no impulse needed. A 1M candle wicks into a high-volume level of the recent
+  volume profile (``vp_*``), closes back above it, and price runs ``fast_move`` points away
+  from the wick low within a few minutes; stop under the wick.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .smc import Candle, _mirror, atr, unswept_levels
 
@@ -58,6 +61,14 @@ class MomoParams:
     scalp_r: float = 0  # >0: take half at this many R instead of scalp_tp points
     trail_r: float = 0  # >0: trail this many R behind the best price instead of trail points
     sessions: str = ""  # UTC hours to open trades, e.g. "7-11,13-17"; empty = always
+    # rejection: 1M wick off a high-volume level, then a fast move away
+    vp_bin: float = 5.0        # price bucket for the volume profile (points)
+    vp_lookback: float = 480   # minutes of 1M bars in the profile
+    vp_pct: float = 0.8        # a level must be in the top 20% of buckets by volume
+    zone_w: float = 4.0        # how close the wick must get to the level (points)
+    wick_ratio: float = 0.5    # rejection wick >= this share of the 1M candle
+    vol_mult: float = 0.0      # >0: rejection candle volume >= this x average 1M volume
+    fast_move: float = 6.0     # points away from the wick low that confirm the rejection
 
     @classmethod
     def from_cfg(cls, cfg) -> "MomoParams":
@@ -76,7 +87,8 @@ PRESETS = {
     "NQ": {},
     "GC": {"min_5m_move": 2.0, "min_1m_move": 1.2, "min_atr5": 1.2, "min_tp": 1.5,
            "max_tp": 7.0, "scalp_tp": 1.5, "min_sl": 1.0, "max_sl": 3.0, "sl_buffer": 0.3,
-           "trail": 1.2, "fade_body": 1.0, "tick": 0.1},
+           "trail": 1.2, "fade_body": 1.0, "tick": 0.1,
+           "vp_bin": 0.5, "zone_w": 0.4, "fast_move": 0.8},
 }
 
 
@@ -132,9 +144,27 @@ def _impulse(x: Candle, before: list[Candle], p: MomoParams, why: list[str]) -> 
     return a5
 
 
+def volume_levels(c1: list[Candle], bin_size: float, pct: float) -> list[float]:
+    """High-volume price levels: local peaks of the volume profile in its top ``1 - pct``."""
+    if not c1 or bin_size <= 0 or not any(x.v for x in c1):
+        return []
+    lo = min(x.l for x in c1)
+    vol: dict[int, float] = {}
+    for x in c1:
+        a, b = int((x.l - lo) // bin_size), int((x.h - lo) // bin_size)
+        share = x.v / (b - a + 1)
+        for k in range(a, b + 1):
+            vol[k] = vol.get(k, 0.0) + share
+    ranked = sorted(vol.values())
+    cut = ranked[min(len(ranked) - 1, int(len(ranked) * pct))]
+    peaks = [k for k, v in vol.items()
+             if v >= cut and v >= vol.get(k - 1, 0) and v >= vol.get(k + 1, 0)]
+    return sorted(lo + (k + 0.5) * bin_size for k in peaks)
+
+
 def _finish(price: float, sl_raw: float, x: Candle, a5: float, speed: float,
             before: list[Candle], c15: list[Candle], p: MomoParams,
-            why: list[str]) -> MomoSignal | None:
+            why: list[str], extra_above: list[float] | None = None) -> MomoSignal | None:
     """Turn an entry into a signal: clamp the stop, score strength, size the target."""
     dist = price - sl_raw
     if dist > p.max_sl:
@@ -162,7 +192,7 @@ def _finish(price: float, sl_raw: float, x: Candle, a5: float, speed: float,
     notes = [f"{k} {v:.0%}" for k, v in parts.items()]
 
     above = [lv for lv in unswept_levels(before + [x], "H") + unswept_levels(c15[:-1], "H")
-             if lv > price]
+             + (extra_above or []) if lv > price]
     if above:
         room = min(above) - price - p.tick
         if room < p.min_tp:
@@ -197,6 +227,46 @@ def _long_signal(c1: list[Candle], c5: list[Candle], c15: list[Candle],
             return None
         speed = (push - p.min_1m_move) / (2 * p.min_1m_move)
         return _finish(price, min(m1a.l, m1b.l) - p.sl_buffer, x, a5, speed, before, c15, p, why)
+
+    if mode == "rejection":
+        a5 = atr(c5[:-1])
+        if a5 < p.min_atr5:
+            why.append(f"thị trường chậm (ATR5 {a5:.1f} < {p.min_atr5:g})")
+            return None
+        hist = c1[:-4][-int(p.vp_lookback):]
+        levels = volume_levels(hist, p.vp_bin, p.vp_pct)
+        if not levels:
+            why.append("chưa có dữ liệu volume")
+            return None
+        avg_v = sum(x.v for x in hist[-30:]) / max(1, len(hist[-30:]))
+        hit = None
+        for x in c1[-4:-1]:  # the last three closed 1M candles
+            rng = x.h - x.l
+            if rng <= 0 or (min(x.o, x.c) - x.l) / rng < p.wick_ratio:
+                continue
+            if p.vol_mult and x.v < p.vol_mult * avg_v:
+                continue
+            near = [lv for lv in levels if lv - 2 * p.zone_w <= x.l <= lv + p.zone_w and x.c > lv]
+            if near:
+                hit = (x, max(near))
+        if hit is None:
+            why.append("chưa có râu 1M từ chối tại vùng volume")
+            return None
+        x, level = hit
+        low = min(c.l for c in c1[-4:])
+        move = price - low
+        if move < p.fast_move:
+            why.append(f"chưa bật đủ nhanh ({move:.1f}/{p.fast_move:g} điểm từ râu)")
+            return None
+        if move > 2.5 * p.fast_move:
+            why.append("đã bật quá xa khỏi râu")
+            return None
+        speed = move / p.fast_move - 1
+        others = [lv for lv in levels if lv > price + p.zone_w]
+        sig = _finish(price, low - p.sl_buffer, c5[-1], a5, speed, c5[:-1], c15, p, why, others)
+        if sig:
+            sig.notes.insert(1, f"vùng volume {level:,.2f}")
+        return sig
 
     if mode == "close":
         x, before = c5[-2], c5[:-2]
@@ -256,7 +326,7 @@ def _long_signal(c1: list[Candle], c5: list[Candle], c15: list[Candle],
         speed = (now.c - hi) / max(p.min_1m_move, 1e-9)
         return _finish(price, lo - p.sl_buffer, x, a5, speed, before, c15, p, why)
 
-    raise ValueError(f"MOMO_ENTRY_MODE không hợp lệ: {mode!r} (fomo|close|pullback|breakout)")
+    raise ValueError(f"MOMO_ENTRY_MODE không hợp lệ: {mode!r} (fomo|close|pullback|breakout|rejection)")
 
 
 def _flip(sig: MomoSignal) -> MomoSignal:
@@ -281,6 +351,14 @@ def momentum_signal(c1: list[Candle], c5: list[Candle], c15: list[Candle],
     """Signal (or None) plus the reasons to wait. Last candle of each list = forming."""
     if len(c5) < 20 or len(c1) < 8:
         return None, ["chưa đủ dữ liệu"]
+    if "," in p.entry_mode:  # several entry modes: the first one with a signal wins
+        reasons: list[str] = []
+        for mode in p.entry_mode.split(","):
+            sig, why = momentum_signal(c1, c5, c15, replace(p, entry_mode=mode.strip()))
+            if sig:
+                return sig, []
+            reasons += why
+        return None, list(dict.fromkeys(reasons))
     why_long: list[str] = []
     sig = _long_signal(c1, c5, c15, p, why_long)
     if sig:

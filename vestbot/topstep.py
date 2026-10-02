@@ -119,7 +119,8 @@ class TopstepClient:
             "unit": unit, "unitNumber": number, "limit": limit, "includePartialBar": True,
         })["bars"]
         bars = sorted(bars, key=lambda b: b["t"])[-limit:]
-        return [{"t": b["t"], "o": b["o"], "h": b["h"], "l": b["l"], "c": b["c"]} for b in bars]
+        return [{"t": b["t"], "o": b["o"], "h": b["h"], "l": b["l"], "c": b["c"], "v": b.get("v", 0)}
+                for b in bars]
 
     def place_order(self, *, symbol: str, is_buy: bool, size: str, order_type: str = "MARKET",
                     limit_price: str | None = None, reduce_only: bool = False,
