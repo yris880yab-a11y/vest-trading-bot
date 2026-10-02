@@ -20,6 +20,10 @@ Stop = under the last two 1M lows, between ``min_sl`` and ``max_sl`` (wider = to
   1M candle breaks back above the pullback candle; stop under the pullback low;
 * ``breakout``: wait for a tight 1M pause (<= ``cons_max`` of the impulse) in the top half,
   enter on the break of the pause high; stop under the pause;
+* ``sweep``: a 1M candle takes out the lowest low of the last ``sw_lookback`` candles by at
+  most ``sw_max_depth``, price holds back above that low, then breaks the high of the
+  ``sw_mss_bars`` candles before the sweep (market structure shift); enter on the break,
+  stop under the sweep low;
 * ``rejection``: no impulse needed. A 1M candle wicks into a high-volume level of the recent
   volume profile (``vp_*``), closes back above it, and price runs ``fast_move`` points away
   from the wick low within a few minutes; stop under the wick.
@@ -75,6 +79,17 @@ class MomoParams:
     bounce_vol_mult: float = 0.0  # >0: candles after the wick trade >= this x average 1M volume
     active_vol_mult: float = 0.0  # >0: last 30 min of volume >= this x the baseline average
     active_vol_base: float = 0.0  # baseline length in minutes (0 = vp_lookback); 1440 = 24h
+    rej_swings: float = 0      # 1 = 1M swing highs/lows (old support/resistance) are levels too
+    swing_lookback: float = 120  # minutes of 1M candles searched for those swings
+    # sweep: 1M takes out the recent low, holds back above it, then breaks the small high
+    sw_lookback: float = 20    # 1M candles that set the low to be swept
+    sw_window: float = 3       # the sweep happened within this many 1M candles
+    sw_max_depth: float = 10.0  # deeper than this below the low = breakdown, not a sweep
+    sw_mss_bars: float = 2     # 1M candles before the sweep whose high must break
+    sw_max_sl: float = 25.0    # the stop sits under the sweep, so allow a wider one
+    sw_max_chase: float = 0.5  # skip if price ran past the break by more than this x range
+    sw_room: float = 1         # 1 = stop the target before nearby highs, 0 = ignore them
+    sw_tp_r: float = 1.5       # target = this many times the stop distance (0 = strength score)
 
     @classmethod
     def from_cfg(cls, cfg) -> "MomoParams":
@@ -96,7 +111,7 @@ PRESETS = {
     "NQ": {},
     "GC": {"min_5m_move": 2.0, "min_1m_move": 1.2, "min_atr5": 1.2, "min_tp": 1.5,
            "max_tp": 7.0, "scalp_tp": 1.5, "min_sl": 1.0, "max_sl": 3.0, "sl_buffer": 0.3,
-           "trail": 1.2, "fade_body": 1.0, "tick": 0.1,
+           "trail": 1.2, "fade_body": 1.0, "tick": 0.1, "sw_max_depth": 1.5, "sw_max_sl": 3.5,
            "vp_bin": 0.5, "zone_w": 0.4, "fast_move": 0.8},
 }
 
@@ -153,6 +168,19 @@ def _impulse(x: Candle, before: list[Candle], p: MomoParams, why: list[str]) -> 
     return a5
 
 
+def swing_levels(c1: list[Candle], n: int = 2) -> list[float]:
+    """Confirmed 1M swing lows and highs (n candles each side): support/resistance that
+    price often respects again after breaking it."""
+    out = []
+    for i in range(n, len(c1) - n):
+        side = c1[i - n:i + n + 1]
+        if c1[i].l <= min(c.l for c in side):
+            out.append(c1[i].l)
+        if c1[i].h >= max(c.h for c in side):
+            out.append(c1[i].h)
+    return out
+
+
 def volume_levels(c1: list[Candle], bin_size: float, pct: float) -> list[float]:
     """High-volume price levels: local peaks of the volume profile in its top ``1 - pct``."""
     if not c1 or bin_size <= 0 or not any(x.v for x in c1):
@@ -173,7 +201,8 @@ def volume_levels(c1: list[Candle], bin_size: float, pct: float) -> list[float]:
 
 def _finish(price: float, sl_raw: float, x: Candle, a5: float, speed: float,
             before: list[Candle], c15: list[Candle], p: MomoParams,
-            why: list[str], extra_above: list[float] | None = None) -> MomoSignal | None:
+            why: list[str], extra_above: list[float] | None = None,
+            room_check: bool = True, tp_r: float = 0.0) -> MomoSignal | None:
     """Turn an entry into a signal: clamp the stop, score strength, size the target."""
     dist = price - sl_raw
     if dist > p.max_sl:
@@ -198,18 +227,20 @@ def _finish(price: float, sl_raw: float, x: Candle, a5: float, speed: float,
         return None
     score = sum(parts.values()) / len(parts)
     tp_dist = p.min_tp + (p.max_tp - p.min_tp) * score
+    if tp_r:  # target as a multiple of the stop distance, within min_tp..max_tp
+        tp_dist = min(p.max_tp, max(p.min_tp, tp_r * dist))
     notes = [f"{k} {v:.0%}" for k, v in parts.items()]
 
     above = [lv for lv in unswept_levels(before + [x], "H") + unswept_levels(c15[:-1], "H")
-             + (extra_above or []) if lv > price]
+             + (extra_above or []) if lv > price] if room_check else []
     if above:
         room = min(above) - price - p.tick
         if room < p.min_tp:
-            why.append(f"liquidity chặn ngay {min(above):,.2f} ({room:.1f} điểm)")
+            why.append(f"liquidity chặn ngay {abs(min(above)):,.2f} ({room:.1f} điểm)")
             return None
         if room < tp_dist:
             tp_dist = room
-            notes.append(f"mục tiêu dừng trước liquidity {min(above):,.2f}")
+            notes.append(f"mục tiêu dừng trước liquidity {abs(min(above)):,.2f}")
     if tp_dist < p.min_rr * dist:
         why.append(f"lời/rủi ro thấp ({tp_dist:.1f}/{dist:.1f})")
         return None
@@ -244,6 +275,8 @@ def _long_signal(c1: list[Candle], c5: list[Candle], c15: list[Candle],
             return None
         hist = c1[:-4][-int(p.vp_lookback):]
         levels = volume_levels(hist, p.vp_bin, p.vp_pct)
+        if p.rej_swings:
+            levels += swing_levels(c1[:-4][-int(p.swing_lookback):])
         if not levels:
             why.append("chưa có dữ liệu volume")
             return None
@@ -279,7 +312,41 @@ def _long_signal(c1: list[Candle], c5: list[Candle], c15: list[Candle],
         others = [lv for lv in levels if lv > price + p.zone_w]
         sig = _finish(price, low - p.sl_buffer, c5[-1], a5, speed, c5[:-1], c15, p, why, others)
         if sig:
-            sig.notes.insert(1, f"vùng volume {level:,.2f}")
+            sig.notes.insert(1, f"vùng giá {abs(level):,.2f}")
+        return sig
+
+    if mode == "sweep":
+        a5 = atr(c5[:-1])
+        if a5 < p.min_atr5:
+            why.append(f"thị trường chậm (ATR5 {a5:.1f} < {p.min_atr5:g})")
+            return None
+        w, n, m = int(p.sw_window), int(p.sw_lookback), int(p.sw_mss_bars)
+        if len(c1) < w + n + 1:
+            why.append("chưa đủ nến 1M")
+            return None
+        recent = c1[-w - 1:]                  # sweep window, forming candle included
+        ref_low = min(c.l for c in c1[-w - 1 - n:-w - 1])
+        k = min(range(len(recent)), key=lambda i: recent[i].l)
+        swept = recent[k].l
+        if not ref_low - p.sw_max_depth <= swept < ref_low:
+            why.append("chưa quét đáy 1M" if swept >= ref_low else "quét quá sâu (gãy xuống)")
+            return None
+        if price <= ref_low:
+            why.append(f"chưa giữ lại trên đáy bị quét {ref_low:,.2f}")
+            return None
+        pos = len(c1) - len(recent) + k       # index of the sweep candle
+        mss = max(c.h for c in c1[max(0, pos - m):pos + 1])
+        if price <= mss:
+            why.append(f"chờ phá đỉnh {mss:,.2f} (MSS)")
+            return None
+        if price - mss > p.sw_max_chase * (mss - swept):
+            why.append("đã chạy quá xa khỏi điểm phá")
+            return None
+        speed = (price - swept) / max(p.fast_move, 1e-9) / 3
+        sig = _finish(price, swept - p.sl_buffer, c5[-1], a5, speed, c5[:-1], c15,
+                      replace(p, max_sl=p.sw_max_sl), why, room_check=bool(p.sw_room), tp_r=p.sw_tp_r)
+        if sig:
+            sig.notes.insert(1, f"quét {abs(ref_low):,.2f} → {abs(swept):,.2f}, phá {abs(mss):,.2f}")
         return sig
 
     if mode == "close":
@@ -340,7 +407,8 @@ def _long_signal(c1: list[Candle], c5: list[Candle], c15: list[Candle],
         speed = (now.c - hi) / max(p.min_1m_move, 1e-9)
         return _finish(price, lo - p.sl_buffer, x, a5, speed, before, c15, p, why)
 
-    raise ValueError(f"MOMO_ENTRY_MODE không hợp lệ: {mode!r} (fomo|close|pullback|breakout|rejection)")
+    raise ValueError(f"MOMO_ENTRY_MODE không hợp lệ: {mode!r}"
+                     " (fomo|close|pullback|breakout|rejection|sweep)")
 
 
 def _flip(sig: MomoSignal) -> MomoSignal:

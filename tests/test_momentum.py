@@ -253,7 +253,7 @@ def test_rejection_entry_after_wick_and_fast_bounce():
     p = MomoParams(entry_mode="rejection")
     sig, why = momentum_signal(*rejection_setup(), p)
     assert sig is not None and sig.direction == "LONG", why
-    assert sig.sl < 29980.0 and any("vùng volume" in n for n in sig.notes)
+    assert sig.sl < 29980.0 and any("vùng giá" in n for n in sig.notes)
 
 
 def test_rejection_needs_the_bounce_and_volume_when_asked():
@@ -395,3 +395,48 @@ def test_oco_target_fill_is_booked_at_the_target():
     feed.set_price(target - 0.5)
     bot.tick()
     assert bot.trade is None and bot.day_r > 0
+
+
+def sweep_setup(swept=30994.75, now=31017.0):
+    """Example 1 from the chart: range 31,003-31,016, 1M sweep of the low, break of 31,016."""
+    c1 = []
+    for i in range(30):
+        lo = 31003.25 if i == 25 else 31004.0
+        c1.append(Candle(i, 31009, 31016.25 if i >= 27 else 31014, lo, 31010))
+    c1.append(Candle(30, 31007.25, 31014.25, swept, 31001))       # sweep candle
+    c1.append(Candle(31, 31001, now, 30999.25, now))               # forming: breaks 31,016.25
+    return c1, quiet_5m(30, base=31010, size=10), quiet_5m(30, base=31010, size=20)
+
+
+def test_sweep_then_break_of_structure_goes_long():
+    sig, why = momentum_signal(*sweep_setup(), MomoParams(entry_mode="sweep", sw_room=0))
+    assert sig is not None and sig.direction == "LONG", why
+    assert sig.sl == pytest.approx(30994.75 - 2) and any("phá 31,016.25" in n for n in sig.notes)
+
+
+def test_sweep_needs_the_break_and_not_a_breakdown():
+    sig, why = momentum_signal(*sweep_setup(now=31012.0), MomoParams(entry_mode="sweep", sw_room=0))
+    assert sig is None and any("chờ phá" in w for w in why)
+    sig, why = momentum_signal(*sweep_setup(swept=30980.0), MomoParams(entry_mode="sweep", sw_room=0))
+    assert sig is None and any("quá sâu" in w for w in why)
+
+
+def swing_setup():
+    """Example 2: old support 31,045 breaks, price comes back, wicks into it and drops fast."""
+    c1 = [Candle(i, 31060, 31062, 31058, 31060) for i in range(10)]
+    c1.append(Candle(10, 31055, 31056, 31045, 31052))              # swing low = support
+    c1 += [Candle(i, 31055, 31060, 31050, 31058) for i in range(11, 20)]
+    c1 += [Candle(i, 31030, 31032, 31024, 31028) for i in range(20, 40)]  # broke down
+    c1.append(Candle(40, 31034, 31045, 31031, 31035))              # wick back into 31,045
+    c1 += [Candle(41, 31035, 31036, 31033, 31034), Candle(42, 31034, 31035, 31033, 31034)]
+    c1.append(Candle(43, 31034, 31034.5, 31034, 31035 - 0.5))      # forming, 10.5 below the wick
+    return c1, quiet_5m(30, base=31030, size=10), quiet_5m(30, base=31030, size=20)
+
+
+def test_rejection_at_old_support_turned_resistance():
+    c1, c5, c15 = swing_setup()
+    sig, why = momentum_signal(c1, c5, c15, MomoParams(entry_mode="rejection"))
+    assert sig is None                                             # no volume, no swing levels
+    sig, why = momentum_signal(c1, c5, c15, MomoParams(entry_mode="rejection", rej_swings=1, min_rr=0.5))
+    assert sig is not None and sig.direction == "SHORT", why
+    assert sig.sl == pytest.approx(31045 + 2) and any("31,045" in n for n in sig.notes)
