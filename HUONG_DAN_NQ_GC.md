@@ -113,6 +113,7 @@ Lưu ý khi chạy thật:
 | `BOT_FLATTEN_TIME_CT` | 15:08 | 15:08 | đóng hết lệnh lúc 3:08 PM Chicago |
 | `MOMO_ENTRY_MODE` | rejection,close | rejection | kiểu vào lệnh |
 | `MOMO_SESSIONS` | 7-20 | (trống) | giờ UTC được mở lệnh; trống = 24h |
+| `MOMO_BLACKOUT` | 08:28-08:40 | 08:28-08:40 | giờ New York không vào lệnh và đóng lệnh đang mở (giờ ra tin 8:30) |
 | `MOMO_VOL_MULT` | 0 | 1.0 | volume nến rút râu ≥ x lần trung bình |
 | `MOMO_SCALP_TP` | 10 | 1.5 | chốt 1/2 (điểm) |
 | `MOMO_MAX_SL` | 20 | 3.0 | SL xa hơn → bỏ lệnh |

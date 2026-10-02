@@ -12,8 +12,9 @@ rule are shared with :class:`SMCBot`.
 from __future__ import annotations
 
 import logging
+from zoneinfo import ZoneInfo
 
-from .momentum import MomoParams, MomoSignal, in_sessions, momentum_signal
+from .momentum import MomoParams, MomoSignal, in_blackout, in_sessions, momentum_signal
 from .smc import parse_candles
 from .smc_bot import SMCBot, Trade
 
@@ -77,6 +78,11 @@ class MomentumBot(SMCBot):
             if self.trade:
                 self._exit(1, price, f"đóng trước {self.cfg.flatten_time_ct} giờ Chicago (luật Topstep)")
             return
+        blackout = in_blackout(self.now().astimezone(ZoneInfo("America/New_York")),
+                               self.params.blackout)
+        if blackout and self.trade:
+            self._exit(1, price, "giờ ra tin / mở cửa (MOMO_BLACKOUT)")
+            return
         if self.trade:
             self.manage_momo(price, c1)
             return
@@ -86,8 +92,8 @@ class MomentumBot(SMCBot):
                 self.sync_position()
             return
 
-        if not in_sessions(self.now().hour, self.params.sessions):
-            return  # outside the trading sessions set in MOMO_SESSIONS
+        if not in_sessions(self.now().hour, self.params.sessions) or blackout:
+            return  # outside MOMO_SESSIONS, or inside a MOMO_BLACKOUT window
         sig, why = momentum_signal(c1, c5, c15, self.params)
         if sig is None:
             msg = "; ".join(why)

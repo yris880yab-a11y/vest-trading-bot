@@ -293,3 +293,30 @@ def test_activity_filter_baseline_length():
     sig, why = momentum_signal(c1, c5, c15, MomoParams(entry_mode="rejection", active_vol_mult=1.0,
                                                        active_vol_base=30))
     assert sig is not None, why
+
+
+def test_blackout_windows_in_new_york_time():
+    from vestbot.momentum import in_blackout
+    at = lambda h, m: datetime(2026, 10, 2, h, m)  # noqa: E731
+    assert not in_blackout(at(8, 30), "")
+    assert in_blackout(at(8, 28), "08:28-08:40") and in_blackout(at(8, 39), "08:28-08:40")
+    assert not in_blackout(at(8, 40), "08:28-08:40") and not in_blackout(at(8, 27), "08:28-08:40")
+    assert in_blackout(at(9, 30), "08:28-08:40, 09:28-09:35")
+
+
+def test_blackout_blocks_entries_and_closes_open_trade():
+    from dataclasses import replace
+    from zoneinfo import ZoneInfo
+    feed = Feed(*burst(+1))
+    bot = bot_for(feed)
+    ny = bot.clock[0].astimezone(ZoneInfo("America/New_York"))
+    window = f"{ny.hour:02d}:{ny.minute:02d}-{ny.hour:02d}:{ny.minute + 1:02d}"
+    bot.params = replace(bot.params, blackout=window)
+    bot.tick()
+    assert bot.trade is None and feed.orders == []
+    bot.params = replace(bot.params, blackout="")
+    bot.tick()
+    assert bot.trade is not None
+    bot.params = replace(bot.params, blackout=window)
+    bot.tick()
+    assert bot.trade is None

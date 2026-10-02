@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import vestbot.smc_bot as smc_bot  # noqa: E402
 from vestbot.config import Config  # noqa: E402
+from vestbot.momentum import STR_PARAMS  # noqa: E402
 from vestbot.smc import Candle  # noqa: E402
 from vestbot.smc_bot import KLINE_LIMITS, SMCBot  # noqa: E402
 
@@ -329,7 +330,7 @@ def main() -> None:
         for kv in a.set:
             name, value = kv.split("=")
             key = name.lower().removeprefix("momo_")
-            overrides[key] = value if key in ("entry_mode", "sessions") else float(value)
+            overrides[key] = value if key in STR_PARAMS else float(value)
         summarize(run_momentum(a.symbol, Path(a.data), a.cost, overrides))
         return
     import vestbot.smc as smc

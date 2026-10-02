@@ -61,6 +61,9 @@ class MomoParams:
     scalp_r: float = 0  # >0: take half at this many R instead of scalp_tp points
     trail_r: float = 0  # >0: trail this many R behind the best price instead of trail points
     sessions: str = ""  # UTC hours to open trades, e.g. "7-11,13-17"; empty = always
+    # New York times with no trading (news, cash open), e.g. "08:28-08:40,09:28-09:35";
+    # an open trade is closed when a window starts
+    blackout: str = ""
     # rejection: 1M wick off a high-volume level, then a fast move away
     vp_bin: float = 5.0        # price bucket for the volume profile (points)
     vp_lookback: float = 480   # minutes of 1M bars in the profile
@@ -80,9 +83,12 @@ class MomoParams:
         for name in cls.__dataclass_fields__:
             raw = getattr(cfg, "momo", {}).get(name)
             if raw not in (None, ""):
-                values[name] = (str(raw).lower() if name in ("entry_mode", "sessions")
+                values[name] = (str(raw).lower() if name in STR_PARAMS
                                 else float(raw))
         return cls(**values)
+
+
+STR_PARAMS = ("entry_mode", "sessions", "blackout")
 
 
 # Gold moves about 1/7 as many points as Nasdaq on 5M, so its thresholds are scaled.
@@ -350,6 +356,18 @@ def in_sessions(hour: int, sessions: str) -> bool:
     for part in sessions.split(","):
         a, b = (int(x) for x in part.split("-"))
         if a <= hour < b if a <= b else (hour >= a or hour < b):
+            return True
+    return False
+
+
+def in_blackout(now_ny, blackout: str) -> bool:
+    """True if the New York wall time ``now_ny`` falls in a "08:28-08:40,09:28-09:35" list."""
+    if not blackout:
+        return False
+    minute = now_ny.hour * 60 + now_ny.minute
+    for part in blackout.split(","):
+        a, b = ((int(h) * 60 + int(m)) for h, m in (x.split(":") for x in part.strip().split("-")))
+        if a <= minute < b:
             return True
     return False
 
