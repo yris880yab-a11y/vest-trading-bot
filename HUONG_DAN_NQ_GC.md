@@ -121,6 +121,24 @@ Hai bot dùng chung một tài khoản: bot đọc **số dư thật** của tà
 
 Muốn rủi ro thấp hơn lúc đầu: đặt `BOT_RISK_USD=50` ở cả hai file.
 
+## Tài khoản 100K (hoặc 150K)
+
+File mẫu cài sẵn cho 50K. Với 100K, sửa các dòng sau ở **cả hai file** `.env.momo` và `.env.momo.gc` (Ctrl+S, rồi khởi động lại bot):
+
+| Dòng | 50K (mẫu) | **100K** | 150K |
+|---|---|---|---|
+| `BOT_ACCOUNT_SIZE=` | 50000 | **100000** | 150000 |
+| `BOT_PROP_MAX_LOSS_USD=` | 2000 | **3000** | 4500 |
+| `BOT_PROFIT_TARGET_USD=` | 3000 | **6000** | 9000 |
+| `BOT_MAX_CONTRACTS=` (mỗi bot) | 25 | **50** | 75 |
+| `BOT_RISK_USD=` (đề xuất) | 100 | **150** | 200 |
+
+- Topstep 100K: mục tiêu $6,000, Maximum Loss Limit $3,000 trailing theo số dư cuối ngày, tối đa 10 mini / 100 micro → mỗi bot 50 micro. Kiểm tra lại số trên trang Topstep vì luật có thể đổi.
+- Rủi ro $150/lệnh giữ cùng tỉ lệ với MLL như 50K ($100 / $2,000). Hai bot cùng lỗ 3R/ngày = tối đa ~$900, còn xa mức $3,000. Muốn đi chậm: giữ `BOT_RISK_USD=100`.
+- Mục tiêu $6,000 ≈ 20R mỗi bot ở $150/lệnh — cần nhiều ngày, đừng tăng rủi ro để đi nhanh.
+- Có nhiều tài khoản (ví dụ 50K cũ + 100K mới): điền đúng tên tài khoản 100K vào `TOPSTEP_ACCOUNT=` (chạy `check_nq_gc.bat` để xem tên).
+- Tài khoản đã có lời trước khi bật bot: bot chưa biết mức số dư cao nhất cuối ngày trước đó, nên mức sàn MLL bot tính có thể thấp hơn mức thật trên Topstep. Xem mức MLL trên TopstepX và hạ `BOT_RISK_USD` nếu đang sát.
+
 ## Kết quả backtest (để biết nên kỳ vọng gì)
 
 | | Số lệnh | Kết quả | Đảo giá + phí x2 | Dữ liệu mới (sau khi chỉnh) |
