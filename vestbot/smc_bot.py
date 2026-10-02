@@ -9,7 +9,15 @@ Trade management:
 No adding to winners, no chasing: one entry per setup.
 
 Risk guards: at most ``BOT_MAX_TRADES_PER_DAY`` entries and stop for the day once the
-realized loss reaches ``BOT_MAX_DAILY_LOSS_R``. Days follow the CME session (22:00 UTC).
+realized loss reaches ``BOT_MAX_DAILY_LOSS_R``. The trading day resets at 8:00 PM New York
+time (Vest Capital's snapshot) or 22:00 UTC (CME session) per ``BOT_DAY_RESET``.
+
+Funded / evaluation accounts (``BOT_ACCOUNT_SIZE`` set): a new trade is only taken if hitting
+its stop keeps the day's loss under ``BOT_PROP_SAFETY`` x the daily limit
+(``BOT_PROP_DAILY_LOSS_PCT`` of the balance at the day's reset) and the balance above the static
+floor (``BOT_PROP_MAX_DD_PCT`` below the starting size). An open trade is flattened if the day's
+loss including unrealized P&L reaches 90% of the daily limit or equity nears the floor.
+Trading stops once ``BOT_PROFIT_TARGET_USD`` is reached.
 The open trade (SL/TP stage) is saved to ``BOT_STATE_FILE`` so a restart keeps managing it.
 """
 from __future__ import annotations
@@ -20,6 +28,7 @@ import math
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .bot import Bot
 from .smc import TIMEFRAMES, Report, analyze, parse_candles
@@ -43,6 +52,7 @@ class Trade:
     risk: float = 0.0  # initial |entry - SL|, for R accounting
     size: float = 0.0  # initial size
     pnl_r: float = 0.0  # realized so far, in R
+    pnl_usd: float = 0.0  # realized so far, in USD
 
     @classmethod
     def from_json(cls, d: dict) -> "Trade":
@@ -61,6 +71,9 @@ class SMCBot(Bot):
         self.day: str | None = None
         self.day_r = 0.0
         self.day_trades = 0
+        self.day_pnl_usd = 0.0
+        self.total_pnl_usd = 0.0
+        self.day_start_balance: float | None = None
         self.load_state()
 
     # ----------------------------------------------------------------- state
@@ -68,7 +81,29 @@ class SMCBot(Bot):
         return datetime.now(timezone.utc)
 
     def session_day(self) -> str:
-        return (self.now() + timedelta(hours=2)).date().isoformat()  # CME day starts 22:00 UTC
+        if self.cfg.day_reset == "cme":  # CME day starts 22:00 UTC
+            return (self.now() + timedelta(hours=2)).date().isoformat()
+        ny = self.now().astimezone(ZoneInfo("America/New_York"))  # Vest Capital: 8:00 PM ET
+        return (ny + timedelta(hours=4)).date().isoformat()
+
+    @property
+    def balance(self) -> float | None:
+        if not self.cfg.account_size:
+            return None
+        return self.cfg.account_size + self.total_pnl_usd
+
+    @property
+    def daily_limit_usd(self) -> float | None:
+        if not self.cfg.account_size:
+            return None
+        base = self.day_start_balance if self.day_start_balance is not None else self.balance
+        return base * self.cfg.prop_daily_loss_pct / 100
+
+    @property
+    def floor_usd(self) -> float | None:
+        if not self.cfg.account_size:
+            return None
+        return self.cfg.account_size * (1 - self.cfg.prop_max_dd_pct / 100)
 
     def load_state(self) -> None:
         path = self.cfg.state_file
@@ -78,6 +113,9 @@ class SMCBot(Bot):
         self.trade = Trade.from_json(d["trade"]) if d.get("trade") else None
         self.last_setup = tuple(d["last_setup"]) if d.get("last_setup") else None
         self.day, self.day_r, self.day_trades = d.get("day"), d.get("day_r", 0.0), d.get("day_trades", 0)
+        self.day_pnl_usd = d.get("day_pnl_usd", 0.0)
+        self.total_pnl_usd = d.get("total_pnl_usd", 0.0)
+        self.day_start_balance = d.get("day_start_balance")
         log.info("Loaded state: trade=%s day=%s R=%.2f trades=%s", self.trade, self.day,
                  self.day_r, self.day_trades)
 
@@ -85,7 +123,9 @@ class SMCBot(Bot):
         if not self.cfg.state_file:
             return
         d = {"trade": asdict(self.trade) if self.trade else None, "last_setup": self.last_setup,
-             "day": self.day, "day_r": self.day_r, "day_trades": self.day_trades}
+             "day": self.day, "day_r": self.day_r, "day_trades": self.day_trades,
+             "day_pnl_usd": self.day_pnl_usd, "total_pnl_usd": self.total_pnl_usd,
+             "day_start_balance": self.day_start_balance}
         tmp = Path(self.cfg.state_file).with_suffix(".tmp")
         tmp.write_text(json.dumps(d, indent=2))
         tmp.replace(self.cfg.state_file)
@@ -102,13 +142,41 @@ class SMCBot(Bot):
     def _roll_day(self) -> None:
         day = self.session_day()
         if day != self.day:
-            self.day, self.day_r, self.day_trades = day, 0.0, 0
+            self.day, self.day_r, self.day_trades, self.day_pnl_usd = day, 0.0, 0, 0.0
+            self.day_start_balance = self.balance
+            self.save_state()
 
-    def risk_block(self) -> str | None:
+    def risk_block(self, rep: Report | None = None) -> str | None:
         if self.day_trades >= self.cfg.max_trades_per_day:
             return f"đã đủ {self.cfg.max_trades_per_day} lệnh hôm nay"
         if self.day_r <= -self.cfg.max_daily_loss_r:
             return f"đã lỗ {self.day_r:.2f}R hôm nay (giới hạn {self.cfg.max_daily_loss_r}R)"
+        if not self.cfg.account_size:
+            return None
+        if self.cfg.profit_target_usd and self.total_pnl_usd >= self.cfg.profit_target_usd:
+            return f"đã đạt mục tiêu lợi nhuận ${self.total_pnl_usd:,.2f} — ngừng giao dịch"
+        risk = self.position_size(rep) * abs(rep.price - rep.sl) if rep else 0.0
+        limit = self.daily_limit_usd * self.cfg.prop_safety
+        if -self.day_pnl_usd + risk > limit:
+            return (f"lệnh mới rủi ro ${risk:,.2f} sẽ vượt {self.cfg.prop_safety:.0%} giới hạn lỗ ngày"
+                    f" (đã lỗ ${-self.day_pnl_usd:,.2f}/${self.daily_limit_usd:,.2f})")
+        buffer = (1 - self.cfg.prop_safety) * (self.cfg.account_size - self.floor_usd)
+        if self.balance - risk < self.floor_usd + buffer:
+            return (f"lệnh mới có thể đưa tài khoản xuống gần mức sàn ${self.floor_usd:,.2f}"
+                    f" (số dư ${self.balance:,.2f})")
+        return None
+
+    def prop_breach_guard(self, price: float) -> str | None:
+        """Flatten before a funded-account rule can be broken."""
+        t = self.trade
+        if not self.cfg.account_size or t is None:
+            return None
+        sign = 1 if t.side == "LONG" else -1
+        unreal = sign * (price - t.entry) * t.remaining
+        if -(self.day_pnl_usd + unreal) >= 0.9 * self.daily_limit_usd:
+            return "lỗ trong ngày (kể cả chưa chốt) chạm 90% giới hạn của quỹ"
+        if self.balance + unreal <= self.floor_usd + 0.1 * (self.cfg.account_size - self.floor_usd):
+            return "equity gần chạm mức sàn drawdown của quỹ"
         return None
 
     # ------------------------------------------------------------------ data
@@ -140,7 +208,7 @@ class SMCBot(Bot):
                 self.sync_position()
             return
         if rep.decision in ("LONG", "SHORT"):
-            block = self.risk_block()
+            block = self.risk_block(rep)
             if block:
                 log.info("Bỏ qua tín hiệu %s: %s", rep.decision, block)
                 return
@@ -190,11 +258,16 @@ class SMCBot(Bot):
         self._market(is_buy=t.side == "SHORT", size=self._fmt(qty), price=price, reduce_only=True)
         sign = 1 if t.side == "LONG" else -1
         r = sign * (price - t.entry) * qty / (t.risk * t.size) if t.risk and t.size else 0.0
+        usd = sign * (price - t.entry) * qty
         t.pnl_r += r
+        t.pnl_usd += usd
         self.day_r += r
+        self.day_pnl_usd += usd
+        self.total_pnl_usd += usd
         t.remaining -= qty
         if t.remaining <= 1e-12:
-            log.info("Trade closed: %+.2fR (hôm nay %+.2fR)", t.pnl_r, self.day_r)
+            log.info("Trade closed: %+.2fR / $%+.2f (hôm nay %+.2fR / $%+.2f, tổng $%+.2f)",
+                     t.pnl_r, t.pnl_usd, self.day_r, self.day_pnl_usd, self.total_pnl_usd)
             self.trade = None
         self.save_state()
 
@@ -206,6 +279,10 @@ class SMCBot(Bot):
 
         if sign * (price - t.sl) <= 0:
             self._reduce(1, price, f"SL {t.sl:,.2f}")
+            return
+        guard = self.prop_breach_guard(price)
+        if guard:
+            self._reduce(1, price, guard)
             return
         m5 = rep.mss5
         if m5 and m5.direction != t.side:

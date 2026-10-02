@@ -54,6 +54,12 @@ class Config:
     risk_usd: float | None
     max_notional_usd: float | None
     max_trades_per_day: int
+    day_reset: str
+    account_size: float | None
+    prop_daily_loss_pct: float
+    prop_max_dd_pct: float
+    prop_safety: float
+    profit_target_usd: float | None
     state_file: str | None
     interval: str
     fast_ema: int
@@ -90,6 +96,12 @@ class Config:
             risk_usd=float(v) if (v := _env("BOT_RISK_USD")) else None,
             max_notional_usd=float(v) if (v := _env("BOT_MAX_NOTIONAL_USD")) else None,
             max_trades_per_day=int(_env("BOT_MAX_TRADES_PER_DAY", "6")),
+            day_reset=(_env("BOT_DAY_RESET", "vest") or "vest").lower(),
+            account_size=float(v) if (v := _env("BOT_ACCOUNT_SIZE")) else None,
+            prop_daily_loss_pct=float(_env("BOT_PROP_DAILY_LOSS_PCT", "4")),
+            prop_max_dd_pct=float(_env("BOT_PROP_MAX_DD_PCT", "6")),
+            prop_safety=float(_env("BOT_PROP_SAFETY", "0.75")),
+            profit_target_usd=float(v) if (v := _env("BOT_PROFIT_TARGET_USD")) else None,
             state_file=_env("BOT_STATE_FILE", "bot_state.json"),
             interval=_env("BOT_INTERVAL", "15m"),
             fast_ema=int(_env("BOT_FAST_EMA", "9")),

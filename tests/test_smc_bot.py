@@ -143,3 +143,65 @@ def test_notional_cap_limits_size():
                           max_notional_usd=10000.0), client)
     bot.tick()
     assert bot.trade.size * bot.trade.entry <= 10000.0
+
+
+def funded_bot(client, **over):
+    cfg = dict(dry_run=False, size_decimals=4, risk_usd=25.0, max_notional_usd=None,
+               account_size=5000.0, prop_daily_loss_pct=4.0, prop_max_dd_pct=6.0,
+               prop_safety=0.75, profit_target_usd=500.0)
+    cfg.update(over)
+    return SMCBot(make_cfg(**cfg), client)
+
+
+def test_funded_trade_allowed_within_limits():
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = funded_bot(client)
+    bot.tick()
+    assert bot.trade is not None  # $25 risk vs $150 (75% of $200) daily budget
+
+
+def test_funded_blocks_trade_that_could_break_daily_limit():
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = funded_bot(client)
+    bot._roll_day()
+    bot.day_pnl_usd = bot.total_pnl_usd = -130.0  # $130 lost today; +$25 > $150 budget
+    bot.tick()
+    assert bot.trade is None and client.orders == []
+
+
+def test_funded_blocks_near_static_floor_and_after_target():
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = funded_bot(client, max_daily_loss_r=99)
+    bot._roll_day()
+    bot.total_pnl_usd = -240.0  # balance 4760, floor 4700 + 75 buffer
+    bot.tick()
+    assert bot.trade is None
+    bot.total_pnl_usd = 500.0
+    bot.tick()
+    assert bot.trade is None and client.orders == []
+
+
+def test_funded_flattens_before_daily_breach():
+    from vestbot.smc import Report
+    from vestbot.smc_bot import Trade
+
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = funded_bot(client)
+    bot._roll_day()  # daily limit $200
+    bot.trade = Trade("SHORT", 30000, 30500, [29000.0, None, None, None], 1.0, ("k",),
+                      risk=500, size=1.0)
+    bot.manage(Report("X", 30150))  # -$150 unrealized: under 90% of $200
+    assert bot.trade is not None
+    bot.manage(Report("X", 30185))  # -$185 >= $180
+    assert bot.trade is None and client.orders[-1]["reduce_only"]
+    assert abs(bot.day_pnl_usd + 185) < 1e-6
+
+
+def test_day_resets_at_8pm_new_york():
+    from datetime import datetime, timezone
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = funded_bot(client)
+    bot.now = lambda: datetime(2026, 10, 1, 23, 59, tzinfo=timezone.utc)  # 7:59 PM EDT
+    before = bot.session_day()
+    bot.now = lambda: datetime(2026, 10, 2, 0, 1, tzinfo=timezone.utc)    # 8:01 PM EDT
+    assert bot.session_day() != before

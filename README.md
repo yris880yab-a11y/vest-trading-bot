@@ -64,6 +64,17 @@ Chiến lược EMA crossover cũ vẫn dùng được với `BOT_STRATEGY=ema`.
 - `BOT_MAX_TRADES_PER_DAY` (mặc định 6): tối đa 6 lệnh mỗi ngày.
 - `BOT_STATE_FILE` (mặc định `bot_state.json`): lưu lệnh đang mở (SL, TP đã chạm, R đã chốt). Bot tắt/bật lại vẫn quản lý tiếp lệnh đó; nếu trên sàn không còn vị thế thì bỏ trạng thái cũ.
 
+### Tài khoản funded (Vest Capital)
+
+Đặt `BOT_ACCOUNT_SIZE` (5000 / 10000 / 25000) để bật chế độ funded:
+
+- Chỉ vào lệnh mới nếu chạm SL vẫn giữ lỗ trong ngày dưới 75% giới hạn 4% của quỹ, và số dư vẫn cách xa mức sàn drawdown tĩnh 6%.
+- Đang có lệnh mà lỗ trong ngày (tính cả phần chưa chốt) chạm 90% giới hạn, hoặc equity gần mức sàn, thì đóng hết ngay.
+- Ngày reset lúc 8:00 PM giờ New York, giống Vest Capital.
+- `BOT_PROFIT_TARGET_USD`: evaluation đạt mục tiêu 10% thì ngừng giao dịch.
+
+Trước khi chạy, hỏi Vest xem tài khoản Vest Capital có cho dùng bot/API không: tài liệu công khai của họ chưa ghi rõ.
+
 ## Backtest
 
 Phát lại dữ liệu từng phút qua đúng code bot (không nhìn trước tương lai, có tính 1 tick phí + trượt giá mỗi chiều):
