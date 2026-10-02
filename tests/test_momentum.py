@@ -268,3 +268,17 @@ def test_rejection_bot_fetches_enough_1m_history():
     bot = bot_for(feed, momo={"entry_mode": "rejection,close"})
     bot.tick()
     assert ("1m", 490) in asked
+
+
+def test_bounce_volume_filter():
+    c1, c5, c15 = rejection_setup()
+    ok, why = momentum_signal(c1, c5, c15, MomoParams(entry_mode="rejection", bounce_vol_mult=0.5))
+    assert ok is not None, why
+    sig, why = momentum_signal(c1, c5, c15, MomoParams(entry_mode="rejection", bounce_vol_mult=3))
+    assert sig is None and any("thiếu volume" in w for w in why)
+
+
+def test_activity_filter_waits_in_a_quiet_market():
+    c1, c5, c15 = rejection_setup()  # last 30 minutes trade lighter than the profile average
+    sig, why = momentum_signal(c1, c5, c15, MomoParams(entry_mode="rejection", active_vol_mult=1.0))
+    assert sig is None and any("ít volume" in w for w in why)

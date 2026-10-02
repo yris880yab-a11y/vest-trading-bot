@@ -69,6 +69,8 @@ class MomoParams:
     wick_ratio: float = 0.5    # rejection wick >= this share of the 1M candle
     vol_mult: float = 0.0      # >0: rejection candle volume >= this x average 1M volume
     fast_move: float = 6.0     # points away from the wick low that confirm the rejection
+    bounce_vol_mult: float = 0.0  # >0: candles after the wick trade >= this x average 1M volume
+    active_vol_mult: float = 0.0  # >0: last 30 min of volume >= this x the profile's average
 
     @classmethod
     def from_cfg(cls, cfg) -> "MomoParams":
@@ -253,6 +255,11 @@ def _long_signal(c1: list[Candle], c5: list[Candle], c15: list[Candle],
             why.append("chưa có râu 1M từ chối tại vùng volume")
             return None
         x, level = hit
+        after = [c for c in c1[-4:-1] if c.t != x.t and c1.index(c) > c1.index(x)]
+        if p.bounce_vol_mult and (not after or sum(c.v for c in after) / len(after)
+                                  < p.bounce_vol_mult * avg_v):
+            why.append("nhịp bật sau râu thiếu volume")
+            return None
         low = min(c.l for c in c1[-4:])
         move = price - low
         if move < p.fast_move:
@@ -351,6 +358,12 @@ def momentum_signal(c1: list[Candle], c5: list[Candle], c15: list[Candle],
     """Signal (or None) plus the reasons to wait. Last candle of each list = forming."""
     if len(c5) < 20 or len(c1) < 8:
         return None, ["chưa đủ dữ liệu"]
+    if p.active_vol_mult:  # trade only while the market is busy
+        hist = c1[:-1][-int(p.vp_lookback):]
+        recent = hist[-30:]
+        base = sum(x.v for x in hist) / max(1, len(hist))
+        if base and sum(x.v for x in recent) / max(1, len(recent)) < p.active_vol_mult * base:
+            return None, ["thị trường ít volume (30 phút gần nhất thấp hơn trung bình)"]
     if "," in p.entry_mode:  # several entry modes: the first one with a signal wins
         reasons: list[str] = []
         for mode in p.entry_mode.split(","):
