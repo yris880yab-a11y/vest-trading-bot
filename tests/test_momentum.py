@@ -88,8 +88,8 @@ class Feed:
 
 
 def bot_for(feed, **over):
-    cfg = make_cfg(dry_run=False, strategy="momentum", order_size="2", size_decimals=0,
-                   momo={}, **over)
+    over.setdefault("momo", {})
+    cfg = make_cfg(dry_run=False, strategy="momentum", order_size="2", size_decimals=0, **over)
     bot = MomentumBot(cfg, feed)
     t0 = datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)
     bot.clock = [t0]
