@@ -10,3 +10,6 @@ bot_state.tmp
 bot_state_gc.json
 bot_state_gc.tmp
 *.log
+.env.momo
+.env.momo.gc
+bot_state_momo_*.json

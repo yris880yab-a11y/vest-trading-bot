@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 # timeframe -> (unit, unitNumber, minutes per bar); units: 2 = minute, 3 = hour, 4 = day
 TIMEFRAMES = {"1m": (2, 1, 1), "5m": (2, 5, 5), "15m": (2, 15, 15),
               "1h": (3, 1, 60), "4h": (3, 4, 240), "1d": (4, 1, 1440)}
-MARKET, BUY, SELL = 2, 0, 1
+MARKET, STOP, BUY, SELL = 2, 4, 0, 1
 TOKEN_TTL = 23 * 3600  # tokens last 24h; refresh a bit earlier
 
 
@@ -132,6 +132,26 @@ class TopstepClient:
         return self._post("/api/Order/place", {"accountId": account, "contractId": contract,
                                                "type": MARKET, "side": BUY if is_buy else SELL,
                                                "size": qty})
+
+    def place_stop(self, *, symbol: str, is_buy: bool, size: str, stop_price: float) -> int:
+        """Resting stop order on the exchange: protects the trade between polls."""
+        data = self._post("/api/Order/place", {
+            "accountId": self.resolve_account(), "contractId": self.contract_id(symbol),
+            "type": STOP, "side": BUY if is_buy else SELL, "size": int(float(size)),
+            "stopPrice": stop_price})
+        return int(data["orderId"])
+
+    def cancel_order(self, order_id: int) -> None:
+        try:
+            self._post("/api/Order/cancel", {"accountId": self.resolve_account(), "orderId": order_id})
+        except TopstepAPIError as e:  # already filled or cancelled
+            log.info("Cancel %s: %s", order_id, e)
+
+    def position_size(self, symbol: str) -> int:
+        cid = self.contract_id(symbol)
+        positions = self._post("/api/Position/searchOpen",
+                               {"accountId": self.resolve_account()})["positions"]
+        return sum(int(p.get("size", 0)) for p in positions if p.get("contractId") == cid)
 
     def account(self) -> dict:
         """Open positions shaped like Vest's /account so the bot can read them."""

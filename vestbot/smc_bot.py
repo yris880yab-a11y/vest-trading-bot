@@ -54,6 +54,9 @@ class Trade:
     size: float = 0.0  # initial size
     pnl_r: float = 0.0  # realized so far, in R
     pnl_usd: float = 0.0  # realized so far, in USD
+    opened_at: float | None = None  # epoch seconds (momentum time stop)
+    best: float | None = None  # best price since entry (momentum trailing stop)
+    stop_id: int | None = None  # protective stop order resting on the exchange
 
     @classmethod
     def from_json(cls, d: dict) -> "Trade":
@@ -330,7 +333,7 @@ class SMCBot(Bot):
         self.day_trades += 1
         self.save_state()
 
-    def _reduce(self, fraction: float, price: float, reason: str) -> None:
+    def _reduce(self, fraction: float, price: float, reason: str, send: bool = True) -> None:
         t = self.trade
         assert t is not None
         qty = float(self._fmt(t.remaining * fraction))
@@ -340,7 +343,9 @@ class SMCBot(Bot):
         left = t.remaining - qty
         what = "ĐÓNG HẾT" if left <= 1e-12 else f"ĐÓNG {self._fmt(qty)} (còn {self._fmt(left)})"
         self.notifier.send(f"{self.cfg.symbol} {t.side}: {what} @ ~{price:,.2f}\nLý do: {reason}")
-        self._market(is_buy=t.side == "SHORT", size=self._fmt(qty), price=price, reduce_only=True)
+        if send:
+            self._market(is_buy=t.side == "SHORT", size=self._fmt(qty), price=price,
+                         reduce_only=True)
         sign = 1 if t.side == "LONG" else -1
         r = sign * (price - t.entry) * qty / (t.risk * t.size) if t.risk and t.size else 0.0
         usd = sign * (price - t.entry) * qty * self.cfg.point_value

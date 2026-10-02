@@ -68,6 +68,7 @@ class Market:
         if confirm:  # confirmation symbol only needs 1M
             self.bars[(confirm, "1m")] = load(data_dir, confirm, "1m")
         self.now: datetime | None = None
+        self.partial: Candle | None = None  # the 1M bar in progress (sub-minute replay)
 
     def view(self, sym: str, tf: str, limit: int) -> list[Candle]:
         now = self.now
@@ -75,6 +76,8 @@ class Market:
         closed = [c for s, e, c in bars if e <= now][-limit:]
         cur = [(s, e) for s, e, _ in bars if s <= now < e]
         if tf == "1m" or not cur:
+            if tf == "1m" and self.partial is not None:
+                return closed + [self.partial]
             last = closed[-1]
             return closed + [Candle(int(now.timestamp() * 1000), last.c, last.c, last.c, last.c)]
         start = cur[0][0]
@@ -83,6 +86,8 @@ class Market:
         cut = five[-1][1] if five else start
         ones = [c for s, e, c in self.bars[(sym, "1m")] if s >= cut and e <= now]
         parts = [c for _, _, c in five] + ones
+        if self.partial is not None:
+            parts.append(self.partial)
         if not parts:
             parts = [closed[-1]]
         return closed + [aggregate(parts, int(start.timestamp() * 1000))]
@@ -97,6 +102,8 @@ class BacktestClient:
         self.cost = cost
         self.orders: list[dict] = []
         self.price = 0.0
+        self.pos = 0.0
+        self.stop: dict | None = None
 
     def klines(self, symbol, interval, limit=200):
         return [[x.t, x.o, x.h, x.l, x.c, 0] for x in self.market.view(symbol, interval, limit)]
@@ -104,7 +111,106 @@ class BacktestClient:
     def place_order(self, **kw):
         fill = self.price + (self.cost if kw["is_buy"] else -self.cost)
         self.orders.append({**kw, "fill": fill, "time": self.market.now})
+        self.pos += float(kw["size"]) * (1 if kw["is_buy"] else -1)
         return {"id": str(len(self.orders))}
+
+    # a resting stop order, filled at its price when the replayed price crosses it
+    def place_stop(self, *, symbol, is_buy, size, stop_price):
+        self.stop = {"id": len(self.orders) + 1000, "is_buy": is_buy, "size": size,
+                     "price": stop_price}
+        return self.stop["id"]
+
+    def cancel_order(self, order_id):
+        if self.stop and self.stop["id"] == order_id:
+            self.stop = None
+
+    def position_size(self, symbol):
+        return abs(self.pos)
+
+    def move_price(self, price: float) -> None:
+        self.price = price
+        st = self.stop
+        if st and ((not st["is_buy"] and price <= st["price"]) or (st["is_buy"] and price >= st["price"])):
+            self.stop = None
+            self.price = st["price"]
+            self.place_order(symbol="", is_buy=st["is_buy"], size=st["size"], reduce_only=True)
+            self.price = price
+
+
+def run_momentum(sym: str, data_dir: Path, cost: float | None = None,
+                 overrides: dict | None = None) -> dict:
+    """Replay every 1M bar as 4 prices (open, low/high, high/low, close) through MomentumBot."""
+    import vestbot.momentum_bot as momentum_bot
+    from vestbot.momentum import PRESETS
+
+    market = Market(data_dir, sym)
+    client = BacktestClient(market, DEFAULT_COST.get(sym, 0.0) if cost is None else cost)
+    cfg = Config.from_env()
+    cfg.symbol, cfg.confirm_symbol, cfg.strategy = sym, None, "momentum"
+    cfg.dry_run, cfg.order_size, cfg.size_decimals, cfg.risk_usd = False, "1", 2, None
+    cfg.state_file, cfg.account_size, cfg.flatten_time_ct = None, None, None
+    cfg.momo = {**PRESETS.get(sym, {}), **(overrides or {})}
+    bot = momentum_bot.MomentumBot(cfg, client)
+    bot.now = lambda: market.now
+
+    signals, waits = [], Counter()
+    real = momentum_bot.momentum_signal
+
+    def spy(*a, **k):
+        sig, why = real(*a, **k)
+        if sig:
+            signals.append(sig)
+        for w in why:
+            waits[re.sub(r"[-+]?[\d][\d,.]*", "#", w)] += 1
+        return sig, why
+
+    momentum_bot.momentum_signal = spy
+    exit_log: list[str] = []
+
+    class Grab(logging.Handler):
+        def emit(self, record):
+            msg = record.getMessage()
+            if msg.startswith("EXIT"):
+                exit_log.append(msg.split("(", 1)[-1].rstrip(")"))
+
+    lg = logging.getLogger("vestbot.smc")
+    lg.setLevel(logging.INFO)
+    lg.propagate = False
+    lg.addHandler(Grab())
+    logging.getLogger("vestbot.momo").setLevel(logging.WARNING)
+
+    one_min = market.bars[(sym, "1m")]
+    warmup = 30
+    trades, open_trade = [], None
+    try:
+        for s, e, c in one_min[warmup:]:
+            path = [c.o, c.l, c.h, c.c] if c.c >= c.o else [c.o, c.h, c.l, c.c]
+            for k, px in enumerate(path):
+                market.now = s + timedelta(seconds=10 + 15 * k)
+                market.partial = Candle(c.t, c.o, max(path[:k + 1]), min(path[:k + 1]), px)
+                before = len(client.orders)
+                client.move_price(px)
+                bot.tick()
+                for o in client.orders[before:]:
+                    if not o["reduce_only"]:
+                        sig = signals[-1]
+                        open_trade = {"side": sig.direction, "entry": o["fill"], "time": market.now,
+                                      "sl": sig.sl, "targets": [sig.scalp_tp, sig.tp],
+                                      "report": sig.render(sym), "exits": []}
+                    else:
+                        open_trade["exits"].append((market.now, float(o["size"]), o["fill"],
+                                                    exit_log.pop(0)))
+                if open_trade and bot.trade is None:
+                    trades.append(open_trade)
+                    open_trade = None
+    finally:
+        momentum_bot.momentum_signal = real
+        market.partial = None
+    if open_trade:
+        open_trade["open_at_end"] = client.price
+        trades.append(open_trade)
+    return {"symbol": sym, "start": one_min[warmup][0], "end": one_min[-1][1], "trades": trades,
+            "decisions": Counter({"ENTRY": len(trades)}), "reasons": waits, "last": None}
 
 
 def vn(t: datetime) -> str:
@@ -207,11 +313,19 @@ def main() -> None:
     p.add_argument("--confirm")
     p.add_argument("--data", default="data")
     p.add_argument("--min-momentum", type=int, default=3)
+    p.add_argument("--strategy", default="smc", choices=["smc", "momentum"])
     p.add_argument("--cost", type=float, help="points per side (default: 1 tick)")
     p.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
                    help="override a rule in vestbot.smc, e.g. --set TP1_MIN_R=0.4")
     a = p.parse_args()
     logging.basicConfig(level=logging.WARNING)
+    if a.strategy == "momentum":
+        overrides = {}
+        for kv in a.set:
+            name, value = kv.split("=")
+            overrides[name.lower().removeprefix("momo_")] = float(value)
+        summarize(run_momentum(a.symbol, Path(a.data), a.cost, overrides))
+        return
     import vestbot.smc as smc
     for kv in a.set:
         name, value = kv.split("=")

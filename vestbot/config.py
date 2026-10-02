@@ -75,6 +75,7 @@ class Config:
     flatten_time_ct: str | None
     telegram_chat_id: str | None
     state_file: str | None
+    momo: dict
     interval: str
     fast_ema: int
     slow_ema: int
@@ -130,6 +131,7 @@ class Config:
             flatten_time_ct=_env("BOT_FLATTEN_TIME_CT"),
             telegram_chat_id=_env("TELEGRAM_CHAT_ID"),
             state_file=_env("BOT_STATE_FILE", "bot_state.json"),
+            momo={k[5:].lower(): v for k, v in os.environ.items() if k.startswith("MOMO_")},
             interval=_env("BOT_INTERVAL", "15m"),
             fast_ema=int(_env("BOT_FAST_EMA", "9")),
             slow_ema=int(_env("BOT_SLOW_EMA", "21")),

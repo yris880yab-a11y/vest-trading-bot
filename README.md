@@ -88,6 +88,17 @@ Nếu tài khoản không được dùng API/bot, để `BOT_DRY_RUN=true` và �
 - `BOT_PROP_MAX_LOSS_USD` + `BOT_PROP_TRAILING=eod`: Maximum Loss Limit trailing theo số dư cuối ngày, dừng ở số dư ban đầu.
 - `BOT_FLATTEN_TIME_CT=15:08`: đóng hết lệnh và không vào lệnh mới từ 3:08 PM tới 5:00 PM giờ Chicago.
 
+### Chiến lược scalp momentum (`BOT_STRATEGY=momentum`)
+
+Bắt nến 5M đang chạy nhanh: vào lệnh MARKET theo hướng nến, chốt 10–50 điểm tuỳ độ mạnh của nến và tình trạng thị trường.
+
+- **Vào lệnh khi:** nến 5M đang hình thành chạy ≥ `MOMO_MIN_5M_MOVE` điểm và ≥ `MOMO_MIN_ATR_MULT` × ATR(5M), đóng gần đỉnh/đáy, 2 nến 1M gần nhất cùng đẩy ≥ `MOMO_MIN_1M_MOVE`, thị trường không ngủ, chưa chạy quá xa, và còn khoảng trống tới liquidity gần nhất.
+- **Mục tiêu:** `MOMO_MIN_TP`–`MOMO_MAX_TP` theo điểm độ mạnh (nến/ATR, tốc độ 1M, chuỗi 5M, xu hướng 15M), dừng trước liquidity.
+- **SL:** dưới đáy (trên đỉnh) 2 nến 1M; xa hơn `MOMO_MAX_SL` thì bỏ qua (vào quá trễ). Với Topstep, bot **đặt lệnh stop thật trên sàn**.
+- **Quản lý:** chốt 1/2 ở `MOMO_SCALP_TP` + dời SL về hoà vốn, trail phần còn lại, thoát khi nến 1M ngược mạnh hoặc giữ quá `MOMO_MAX_HOLD_MIN` phút. Mỗi nến 5M chỉ vào 1 lệnh.
+
+Cấu hình mẫu: `.env.topstep.momo.example` (MNQ), `.env.topstep.momo.gc.example` (MGC). Backtest: `python scripts/backtest.py NQ --strategy momentum`.
+
 ## Backtest
 
 Phát lại dữ liệu từng phút qua đúng code bot (không nhìn trước tương lai, có tính 1 tick phí + trượt giá mỗi chiều):
