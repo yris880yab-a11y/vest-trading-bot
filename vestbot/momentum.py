@@ -12,6 +12,14 @@ Entry (long; short is the mirror):
 Target = ``min_tp`` .. ``max_tp`` scaled by a 0-1 strength score (candle vs ATR, 1M speed,
 5M follow-through, 15M trend), capped just before that liquidity.
 Stop = under the last two 1M lows, between ``min_sl`` and ``max_sl`` (wider = too late, skip).
+
+``entry_mode`` chooses how to get in once a 5M impulse candle exists:
+* ``fomo``: at market while the impulse candle is still forming (the rules above);
+* ``close``: after the impulse candle closes, if price has not given back > ``close_max_retrace``;
+* ``pullback``: wait for a 1M pullback of ``pb_min``-``pb_max`` of the impulse, enter when a
+  1M candle breaks back above the pullback candle; stop under the pullback low;
+* ``breakout``: wait for a tight 1M pause (<= ``cons_max`` of the impulse) in the top half,
+  enter on the break of the pause high; stop under the pause.
 """
 from __future__ import annotations
 
@@ -40,15 +48,21 @@ class MomoParams:
     max_hold_min: float = 15.0
     tick: float = 0.25
     max_per_candle: float = 1  # entries allowed in the same 5M candle
+    # how to get in after the 5M impulse: fomo | close | pullback | breakout
+    entry_mode: str = "fomo"
+    close_max_retrace: float = 0.3  # close: skip if price gave back more of the candle body
+    pb_min: float = 0.25  # pullback: retrace at least this share of the impulse body ...
+    pb_max: float = 0.6   # ... but not more (deeper = reversal, not a pullback)
+    cons_max: float = 0.4  # breakout: 1M pause no wider than this share of the impulse body
 
     @classmethod
     def from_cfg(cls, cfg) -> "MomoParams":
         """Read MOMO_* settings from the config's extra map (set in .env)."""
         values = {}
-        for name, f in cls.__dataclass_fields__.items():
+        for name in cls.__dataclass_fields__:
             raw = getattr(cfg, "momo", {}).get(name)
             if raw not in (None, ""):
-                values[name] = float(raw)
+                values[name] = str(raw).lower() if name == "entry_mode" else float(raw)
         return cls(**values)
 
 
@@ -92,56 +106,55 @@ def _ema(values: list[float], n: int) -> float:
     return e
 
 
-def _long_signal(c1: list[Candle], c5: list[Candle], c15: list[Candle],
-                 p: MomoParams, why: list[str]) -> MomoSignal | None:
-    f5, closed5 = c5[-1], c5[:-1]
-    a5 = atr(closed5)
-    body = f5.c - f5.o
+def _impulse(x: Candle, before: list[Candle], p: MomoParams, why: list[str]) -> float | None:
+    """ATR(5M) if ``x`` is a valid bullish impulse candle, else None (reason appended)."""
+    a5 = atr(before)
+    body = x.c - x.o
     if a5 < p.min_atr5:
         why.append(f"thị trường chậm (ATR5 {a5:.1f} < {p.min_atr5:g})")
         return None
     if body < p.min_5m_move or body < p.min_atr_mult * a5:
         why.append(f"nến 5M chưa đủ nhanh ({body:+.1f} điểm, cần {max(p.min_5m_move, p.min_atr_mult * a5):.1f})")
         return None
-    rng = f5.h - f5.l
-    if rng and (f5.h - f5.c) / rng > p.max_wick:
+    rng = x.h - x.l
+    if rng and (x.h - x.c) / rng > p.max_wick:
         why.append("nến 5M đã bị đạp lại (râu dài)")
         return None
-    m1a, m1b = c1[-2], c1[-1]
-    push = (m1a.c - m1a.o) + (m1b.c - m1b.o)
-    if m1a.c <= m1a.o or m1b.c < m1b.o or push < p.min_1m_move:
-        why.append(f"1M không còn đẩy ({push:+.1f} điểm)")
-        return None
-    ext = f5.c - min(x.o for x in c5[-3:])
+    ext = x.c - min(c.o for c in (before[-2:] + [x]))
     if ext > p.max_ext_atr * a5:
         why.append(f"đã chạy quá xa ({ext:.0f} điểm > {p.max_ext_atr:g} ATR)")
         return None
+    return a5
 
-    price = f5.c
-    low = min(m1a.l, m1b.l) - p.sl_buffer
-    dist = price - low
+
+def _finish(price: float, sl_raw: float, x: Candle, a5: float, speed: float,
+            before: list[Candle], c15: list[Candle], p: MomoParams,
+            why: list[str]) -> MomoSignal | None:
+    """Turn an entry into a signal: clamp the stop, score strength, size the target."""
+    dist = price - sl_raw
     if dist > p.max_sl:
         why.append(f"SL cần {dist:.1f} điểm > {p.max_sl:g}: vào quá trễ")
         return None
     dist = max(dist, p.min_sl)
-
     run = 0
-    for x in reversed(closed5[-3:]):
-        if x.c > x.o:
+    for c in reversed(before[-3:]):
+        if c.c > c.o:
             run += 1
         else:
             break
-    trend = _ema([x.c for x in c15[:-1]], 20) if len(c15) > 21 else None
+    trend = _ema([c.c for c in c15[:-1]], 20) if len(c15) > 21 else None
     parts = {
-        "nến/ATR": _clamp((body / a5 - p.min_atr_mult) / 1.5),
-        "tốc độ 1M": _clamp((push - p.min_1m_move) / (2 * p.min_1m_move)),
+        "nến/ATR": _clamp(((x.c - x.o) / a5 - p.min_atr_mult) / 1.5),
+        "tốc độ 1M": _clamp(speed),
         "chuỗi 5M": _clamp(run / 2),
         "xu hướng 15M": 1.0 if trend is not None and price > trend else 0.0,
     }
     score = sum(parts.values()) / len(parts)
     tp_dist = p.min_tp + (p.max_tp - p.min_tp) * score
+    notes = [f"{k} {v:.0%}" for k, v in parts.items()]
 
-    above = [x for x in unswept_levels(closed5, "H") + unswept_levels(c15[:-1], "H") if x > price]
+    above = [lv for lv in unswept_levels(before + [x], "H") + unswept_levels(c15[:-1], "H")
+             if lv > price]
     if above:
         room = min(above) - price - p.tick
         if room < p.min_tp:
@@ -149,20 +162,92 @@ def _long_signal(c1: list[Candle], c5: list[Candle], c15: list[Candle],
             return None
         if room < tp_dist:
             tp_dist = room
-            parts_note = f"mục tiêu dừng trước liquidity {min(above):,.2f}"
-        else:
-            parts_note = ""
-    else:
-        parts_note = ""
+            notes.append(f"mục tiêu dừng trước liquidity {min(above):,.2f}")
     if tp_dist < p.min_rr * dist:
         why.append(f"lời/rủi ro thấp ({tp_dist:.1f}/{dist:.1f})")
         return None
-
-    notes = [f"{k} {v:.0%}" for k, v in parts.items()]
-    if parts_note:
-        notes.append(parts_note)
     scalp = price + p.scalp_tp if tp_dist > p.scalp_tp * 1.5 else None
-    return MomoSignal("LONG", price, price - dist, price + tp_dist, scalp, score, f5.t, notes)
+    notes.insert(0, f"vào kiểu {p.entry_mode}")
+    return MomoSignal("LONG", price, price - dist, price + tp_dist, scalp, score, x.t, notes)
+
+
+def _long_signal(c1: list[Candle], c5: list[Candle], c15: list[Candle],
+                 p: MomoParams, why: list[str]) -> MomoSignal | None:
+    price = c1[-1].c
+    mode = p.entry_mode
+
+    if mode == "fomo":
+        x, before = c5[-1], c5[:-1]
+        a5 = _impulse(x, before, p, why)
+        if a5 is None:
+            return None
+        m1a, m1b = c1[-2], c1[-1]
+        push = (m1a.c - m1a.o) + (m1b.c - m1b.o)
+        if m1a.c <= m1a.o or m1b.c < m1b.o or push < p.min_1m_move:
+            why.append(f"1M không còn đẩy ({push:+.1f} điểm)")
+            return None
+        speed = (push - p.min_1m_move) / (2 * p.min_1m_move)
+        return _finish(price, min(m1a.l, m1b.l) - p.sl_buffer, x, a5, speed, before, c15, p, why)
+
+    if mode == "close":
+        x, before = c5[-2], c5[:-2]
+        a5 = _impulse(x, before, p, why)
+        if a5 is None:
+            return None
+        body = x.c - x.o
+        if x.c - price > p.close_max_retrace * body:
+            why.append(f"giá đã hồi quá {p.close_max_retrace:.0%} nến 5M")
+            return None
+        if price - x.c > 0.5 * body:
+            why.append("giá đã chạy xa sau khi nến 5M đóng")
+            return None
+        low = min(c1[-2].l, c1[-1].l) - p.sl_buffer
+        return _finish(price, low, x, a5, 0.5, before, c15, p, why)
+
+    # pullback / breakout: the impulse is the forming or the last closed 5M candle
+    for x, before in ((c5[-1], c5[:-1]), (c5[-2], c5[:-2])):
+        sub: list[str] = []
+        a5 = _impulse(x, before, p, sub)
+        if a5 is not None:
+            break
+    else:
+        why.extend(sub)
+        return None
+    body = x.c - x.o
+    now, prev = c1[-1], c1[-2]
+
+    if mode == "pullback":
+        top = max(c.h for c in c1[-8:-1])
+        low = min(c1[-3].l, prev.l)
+        depth = top - low
+        if prev.c >= prev.o:
+            why.append("chưa có nến 1M hồi")
+            return None
+        if not p.pb_min * body <= depth <= p.pb_max * body or low <= x.o:
+            why.append(f"nhịp hồi {depth:.1f} điểm ngoài vùng {p.pb_min:.0%}-{p.pb_max:.0%} nến 5M")
+            return None
+        if now.c <= prev.h:
+            why.append(f"chờ nến 1M bật qua {prev.h:,.2f}")
+            return None
+        speed = (now.c - now.o) / max(p.min_1m_move, 1e-9)
+        return _finish(price, low - p.sl_buffer, x, a5, speed, before, c15, p, why)
+
+    if mode == "breakout":
+        pause = c1[-4:-1]
+        hi, lo = max(c.h for c in pause), min(c.l for c in pause)
+        if hi - lo > p.cons_max * body:
+            why.append(f"1M chưa đi ngang ({hi - lo:.1f} điểm > {p.cons_max:.0%} nến 5M)")
+            return None
+        if lo < x.o + 0.5 * body:
+            why.append("nhịp đi ngang đã rơi xuống nửa dưới nến 5M")
+            return None
+        if now.c <= hi:
+            why.append(f"chờ phá {hi:,.2f}")
+            return None
+        speed = (now.c - hi) / max(p.min_1m_move, 1e-9)
+        return _finish(price, lo - p.sl_buffer, x, a5, speed, before, c15, p, why)
+
+    raise ValueError(f"MOMO_ENTRY_MODE không hợp lệ: {mode!r} (fomo|close|pullback|breakout)")
 
 
 def _flip(sig: MomoSignal) -> MomoSignal:
@@ -174,12 +259,17 @@ def _flip(sig: MomoSignal) -> MomoSignal:
 def momentum_signal(c1: list[Candle], c5: list[Candle], c15: list[Candle],
                     p: MomoParams = MomoParams()) -> tuple[MomoSignal | None, list[str]]:
     """Signal (or None) plus the reasons to wait. Last candle of each list = forming."""
-    if len(c5) < 20 or len(c1) < 3:
+    if len(c5) < 20 or len(c1) < 8:
         return None, ["chưa đủ dữ liệu"]
-    f5 = c5[-1]
-    if f5.c >= f5.o:
-        why: list[str] = []
-        return _long_signal(c1, c5, c15, p, why), why
-    why = []
-    sig = _long_signal(_mirror(c1), _mirror(c5), _mirror(c15), p, why)
-    return (_flip(sig) if sig else None), why
+    why_long: list[str] = []
+    sig = _long_signal(c1, c5, c15, p, why_long)
+    if sig:
+        return sig, []
+    why_short: list[str] = []
+    sig = _long_signal(_mirror(c1), _mirror(c5), _mirror(c15), p, why_short)
+    if sig:
+        return _flip(sig), []
+    if p.entry_mode == "fomo":
+        f5 = c5[-1]
+        return None, (why_long if f5.c >= f5.o else why_short)
+    return None, list(dict.fromkeys(why_long + why_short))  # the impulse may be either side

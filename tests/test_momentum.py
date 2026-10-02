@@ -144,3 +144,45 @@ def test_reentry_in_same_candle_only_when_allowed():
     bot.params = bot.params.__class__(max_per_candle=2)
     bot.tick()
     assert bot.trade is not None      # second entry allowed in the same candle
+
+
+def closed_impulse(retrace=2.0):
+    """The 5M impulse has just closed; the new 5M candle and 1M sit near its close."""
+    c1, c5, c15 = burst(+1)
+    x = c5[-1]
+    px = x.c - retrace
+    c5.append(Candle(100, x.c, x.c + 0.5, px - 0.5, px))
+    c1 = c1[:-1] + [Candle(12, x.c, x.c + 0.5, x.c - 1, x.c - 0.5), Candle(13, x.c - 0.5, x.c, px - 0.5, px)]
+    return c1, c5, c15
+
+
+def test_close_mode_enters_after_the_impulse_closes():
+    p = MomoParams(entry_mode="close")
+    sig, why = momentum_signal(*closed_impulse(retrace=2.0), p)
+    assert sig is not None and sig.direction == "LONG", why
+    sig, why = momentum_signal(*closed_impulse(retrace=12.0), p)  # gave back 60% of a 20pt candle
+    assert sig is None and any("hồi quá" in w for w in why)
+
+
+def test_pullback_mode_waits_for_dip_then_resumption():
+    c1, c5, c15 = burst(+1)
+    top = c1[-1].c
+    dip = Candle(12, top, top + 0.5, top - 7, top - 6)        # 1M pullback ~35% of 20pt impulse
+    go = Candle(13, top - 6, top + 2, top - 6.5, top + 1.5)   # breaks back above the dip candle
+    p = MomoParams(entry_mode="pullback")
+    sig, why = momentum_signal(c1 + [dip], c5, c15, p)
+    assert sig is None
+    sig, why = momentum_signal(c1 + [dip, go], c5, c15, p)
+    assert sig is not None and sig.direction == "LONG", why
+    assert sig.sl <= top - 7 - p.sl_buffer + 1e-9 or sig.price - sig.sl == p.min_sl
+
+
+def test_breakout_mode_needs_tight_pause_then_break():
+    c1, c5, c15 = burst(+1)
+    top = c1[-1].c
+    pause = [Candle(12 + i, top, top + 1, top - 2, top - 0.5) for i in range(3)]
+    p = MomoParams(entry_mode="breakout")
+    sig, why = momentum_signal(c1 + pause + [Candle(15, top, top + 0.5, top - 1, top)], c5, c15, p)
+    assert sig is None and any("chờ phá" in w for w in why)
+    sig, why = momentum_signal(c1 + pause + [Candle(15, top, top + 3, top - 0.5, top + 2.5)], c5, c15, p)
+    assert sig is not None and sig.direction == "LONG", why

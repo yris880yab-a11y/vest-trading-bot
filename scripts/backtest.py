@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import csv
 import logging
+import os
 import re
 import sys
 from collections import Counter
@@ -185,6 +186,8 @@ def run_momentum(sym: str, data_dir: Path, cost: float | None = None,
     try:
         for s, e, c in one_min[warmup:]:
             path = [c.o, c.l, c.h, c.c] if c.c >= c.o else [c.o, c.h, c.l, c.c]
+            if os.getenv("BT_PATH") == "reverse":  # stress test: extremes in the opposite order
+                path = [path[0], path[2], path[1], path[3]]
             for k, px in enumerate(path):
                 market.now = s + timedelta(seconds=10 + 15 * k)
                 market.partial = Candle(c.t, c.o, max(path[:k + 1]), min(path[:k + 1]), px)

@@ -97,6 +97,8 @@ Bắt nến 5M đang chạy nhanh: vào lệnh MARKET theo hướng nến, chố
 - **SL:** dưới đáy (trên đỉnh) 2 nến 1M; xa hơn `MOMO_MAX_SL` thì bỏ qua (vào quá trễ). Với Topstep, bot **đặt lệnh stop thật trên sàn**.
 - **Quản lý:** chốt 1/2 ở `MOMO_SCALP_TP` + dời SL về hoà vốn, trail phần còn lại, thoát khi nến 1M ngược mạnh hoặc giữ quá `MOMO_MAX_HOLD_MIN` phút. Mỗi nến 5M chỉ vào 1 lệnh.
 
+- **Kiểu vào lệnh** (`MOMO_ENTRY_MODE`): `fomo` (vào khi nến 5M đang chạy), `close` (chờ nến 5M đóng mạnh, giá chưa hồi quá 30%), `pullback` (chờ nhịp hồi 1M rồi bật lại), `breakout` (chờ 1M đi ngang sát đỉnh rồi phá). Trên dữ liệu NQ đã test, `close` tốt nhất và vẫn lời khi đảo thứ tự giá trong phút hoặc phí gấp đôi; GC chưa có kiểu nào ổn định.
+
 Cấu hình mẫu: `.env.topstep.momo.example` (MNQ), `.env.topstep.momo.gc.example` (MGC). Backtest: `python scripts/backtest.py NQ --strategy momentum`.
 
 ## Backtest
