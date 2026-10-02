@@ -54,6 +54,10 @@ class MomoParams:
     pb_min: float = 0.25  # pullback: retrace at least this share of the impulse body ...
     pb_max: float = 0.6   # ... but not more (deeper = reversal, not a pullback)
     cons_max: float = 0.4  # breakout: 1M pause no wider than this share of the impulse body
+    trend_filter: float = 0  # 1 = only trade with the 15M EMA20
+    scalp_r: float = 0  # >0: take half at this many R instead of scalp_tp points
+    trail_r: float = 0  # >0: trail this many R behind the best price instead of trail points
+    sessions: str = ""  # UTC hours to open trades, e.g. "7-11,13-17"; empty = always
 
     @classmethod
     def from_cfg(cls, cfg) -> "MomoParams":
@@ -62,7 +66,8 @@ class MomoParams:
         for name in cls.__dataclass_fields__:
             raw = getattr(cfg, "momo", {}).get(name)
             if raw not in (None, ""):
-                values[name] = str(raw).lower() if name == "entry_mode" else float(raw)
+                values[name] = (str(raw).lower() if name in ("entry_mode", "sessions")
+                                else float(raw))
         return cls(**values)
 
 
@@ -149,6 +154,9 @@ def _finish(price: float, sl_raw: float, x: Candle, a5: float, speed: float,
         "chuỗi 5M": _clamp(run / 2),
         "xu hướng 15M": 1.0 if trend is not None and price > trend else 0.0,
     }
+    if p.trend_filter and trend is not None and price <= trend:
+        why.append("ngược xu hướng 15M (EMA20)")
+        return None
     score = sum(parts.values()) / len(parts)
     tp_dist = p.min_tp + (p.max_tp - p.min_tp) * score
     notes = [f"{k} {v:.0%}" for k, v in parts.items()]
@@ -166,7 +174,8 @@ def _finish(price: float, sl_raw: float, x: Candle, a5: float, speed: float,
     if tp_dist < p.min_rr * dist:
         why.append(f"lời/rủi ro thấp ({tp_dist:.1f}/{dist:.1f})")
         return None
-    scalp = price + p.scalp_tp if tp_dist > p.scalp_tp * 1.5 else None
+    first = p.scalp_r * dist if p.scalp_r else p.scalp_tp
+    scalp = price + first if tp_dist > first * 1.5 else None
     notes.insert(0, f"vào kiểu {p.entry_mode}")
     return MomoSignal("LONG", price, price - dist, price + tp_dist, scalp, score, x.t, notes)
 
@@ -254,6 +263,17 @@ def _flip(sig: MomoSignal) -> MomoSignal:
     neg = lambda x: None if x is None else -x  # noqa: E731
     return MomoSignal("SHORT", -sig.price, -sig.sl, -sig.tp, neg(sig.scalp_tp), sig.score,
                       sig.candle_key, sig.notes)
+
+
+def in_sessions(hour: int, sessions: str) -> bool:
+    """True if ``hour`` (UTC) falls in a "7-11,13-17" style list; empty list = always."""
+    if not sessions:
+        return True
+    for part in sessions.split(","):
+        a, b = (int(x) for x in part.split("-"))
+        if a <= hour < b if a <= b else (hour >= a or hour < b):
+            return True
+    return False
 
 
 def momentum_signal(c1: list[Candle], c5: list[Candle], c15: list[Candle],

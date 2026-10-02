@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from .momentum import MomoParams, MomoSignal, momentum_signal
+from .momentum import MomoParams, MomoSignal, in_sessions, momentum_signal
 from .smc import parse_candles
 from .smc_bot import SMCBot, Trade
 
@@ -80,6 +80,8 @@ class MomentumBot(SMCBot):
                 self.sync_position()
             return
 
+        if not in_sessions(self.now().hour, self.params.sessions):
+            return  # outside the trading sessions set in MOMO_SESSIONS
         sig, why = momentum_signal(c1, c5, c15, self.params)
         if sig is None:
             msg = "; ".join(why)
@@ -157,8 +159,9 @@ class MomentumBot(SMCBot):
                 self._place_stop()
             return
         if t.stage >= 1 or scalp is None:
-            trail = t.best - sign * p.trail
-            if sign * (trail - t.sl) > p.tick and sign * (price - t.entry) > p.trail:
+            gap = p.trail_r * t.risk if p.trail_r else p.trail
+            trail = t.best - sign * gap
+            if sign * (trail - t.sl) > p.tick and sign * (price - t.entry) > gap:
                 t.sl = self._round(trail)
                 self._place_stop()
                 log.info("Trail SL -> %.2f", t.sl)

@@ -98,6 +98,7 @@ Bắt nến 5M đang chạy nhanh: vào lệnh MARKET theo hướng nến, chố
 - **Quản lý:** chốt 1/2 ở `MOMO_SCALP_TP` + dời SL về hoà vốn, trail phần còn lại, thoát khi nến 1M ngược mạnh hoặc giữ quá `MOMO_MAX_HOLD_MIN` phút. Mỗi nến 5M chỉ vào 1 lệnh.
 
 - **Kiểu vào lệnh** (`MOMO_ENTRY_MODE`): `fomo` (vào khi nến 5M đang chạy), `close` (chờ nến 5M đóng mạnh, giá chưa hồi quá 30%), `pullback` (chờ nhịp hồi 1M rồi bật lại), `breakout` (chờ 1M đi ngang sát đỉnh rồi phá). Trên dữ liệu NQ đã test, `close` tốt nhất và vẫn lời khi đảo thứ tự giá trong phút hoặc phí gấp đôi; GC chưa có kiểu nào ổn định.
+- **Lọc phiên** (`MOMO_SESSIONS`, giờ UTC): momentum lỗ đều ở phiên Á (NQ −7,7R đến −11,6R khi test), lời ở London/New York. Mặc định mẫu MNQ `7-20`, MGC `7-13`. `MOMO_TREND_FILTER=1` chỉ vào cùng chiều EMA20 khung 15M. `MOMO_SCALP_R` / `MOMO_TRAIL_R` đổi chốt nửa / trail sang đơn vị R.
 
 Cấu hình mẫu: `.env.topstep.momo.example` (MNQ), `.env.topstep.momo.gc.example` (MGC). Backtest: `python scripts/backtest.py NQ --strategy momentum`.
 

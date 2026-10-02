@@ -186,3 +186,29 @@ def test_breakout_mode_needs_tight_pause_then_break():
     assert sig is None and any("chờ phá" in w for w in why)
     sig, why = momentum_signal(c1 + pause + [Candle(15, top, top + 3, top - 0.5, top + 2.5)], c5, c15, p)
     assert sig is not None and sig.direction == "LONG", why
+
+
+def test_session_hours():
+    from vestbot.momentum import in_sessions
+    assert in_sessions(3, "")                       # no filter
+    assert in_sessions(7, "7-20") and in_sessions(19, "7-20")
+    assert not in_sessions(20, "7-20") and not in_sessions(2, "7-20")
+    assert in_sessions(23, "22-2") and in_sessions(1, "22-2") and not in_sessions(3, "22-2")
+
+
+def test_bot_skips_entries_outside_sessions():
+    feed = Feed(*burst(+1))
+    bot = bot_for(feed, momo={"sessions": "7-13"})  # clock is 15:00 UTC
+    bot.tick()
+    assert bot.trade is None and feed.orders == []
+    bot.clock[0] = bot.clock[0].replace(hour=9)
+    bot.tick()
+    assert bot.trade is not None
+
+
+def test_trend_filter_blocks_counter_trend():
+    c1, c5, c15 = burst(+1)
+    falling = [Candle(i, 31000 - 20 * i, 31000 - 20 * i + 5, 31000 - 20 * i - 25, 31000 - 20 * i - 20)
+               for i in range(30)]
+    sig, why = momentum_signal(c1, c5, falling, MomoParams(trend_filter=1))
+    assert sig is None and any("xu hướng" in w for w in why)
