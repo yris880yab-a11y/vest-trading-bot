@@ -60,6 +60,8 @@ class Config:
     prop_max_dd_pct: float
     prop_safety: float
     profit_target_usd: float | None
+    telegram_token: str | None
+    telegram_chat_id: str | None
     state_file: str | None
     interval: str
     fast_ema: int
@@ -102,6 +104,8 @@ class Config:
             prop_max_dd_pct=float(_env("BOT_PROP_MAX_DD_PCT", "6")),
             prop_safety=float(_env("BOT_PROP_SAFETY", "0.75")),
             profit_target_usd=float(v) if (v := _env("BOT_PROFIT_TARGET_USD")) else None,
+            telegram_token=_env("TELEGRAM_BOT_TOKEN"),
+            telegram_chat_id=_env("TELEGRAM_CHAT_ID"),
             state_file=_env("BOT_STATE_FILE", "bot_state.json"),
             interval=_env("BOT_INTERVAL", "15m"),
             fast_ema=int(_env("BOT_FAST_EMA", "9")),

@@ -75,6 +75,10 @@ Chiến lược EMA crossover cũ vẫn dùng được với `BOT_STRATEGY=ema`.
 
 Trước khi chạy, hỏi Vest xem tài khoản Vest Capital có cho dùng bot/API không: tài liệu công khai của họ chưa ghi rõ.
 
+### Không có API: chế độ báo lệnh qua Telegram
+
+Nếu tài khoản không được dùng API/bot, để `BOT_DRY_RUN=true` và điền `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Bot không đặt lệnh, chỉ nhắn: vào lệnh (hướng, giá, khối lượng, SL, TP1/2/3), chạm TP và chốt bao nhiêu, dời SL, thoát lệnh. Bạn tự bấm lệnh trên web Vest. Không cần API key, vì dữ liệu nến là dữ liệu công khai.
+
 ## Backtest
 
 Phát lại dữ liệu từng phút qua đúng code bot (không nhìn trước tương lai, có tính 1 tick phí + trượt giá mỗi chiều):

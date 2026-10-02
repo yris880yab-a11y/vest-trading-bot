@@ -31,6 +31,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .bot import Bot
+from .notify import Notifier
 from .smc import TIMEFRAMES, Report, analyze, parse_candles
 
 log = logging.getLogger("vestbot.smc")
@@ -74,6 +75,7 @@ class SMCBot(Bot):
         self.day_pnl_usd = 0.0
         self.total_pnl_usd = 0.0
         self.day_start_balance: float | None = None
+        self.notifier = Notifier(cfg.telegram_token, cfg.telegram_chat_id)
         self.load_state()
 
     # ----------------------------------------------------------------- state
@@ -229,6 +231,24 @@ class SMCBot(Bot):
             size = min(size, self.cfg.max_notional_usd / rep.price)
         return float(self._fmt(size))
 
+    def alert_entry(self, rep: Report, size: float) -> None:
+        f = lambda x: "—" if x is None else f"{x:,.2f}"  # noqa: E731
+        zone = rep.retest.zone if rep.retest else None
+        lines = [
+            f"{rep.direction} {self.cfg.symbol} — vào lệnh MARKET ngay",
+            f"Giá hiện tại: {f(rep.price)}",
+            f"Khối lượng: {self._fmt(size)} (1R = ${size * abs(rep.price - rep.sl):,.2f})",
+            f"SL: {f(rep.sl)}",
+            "TP1/TP2/TP3: " + " / ".join(f(t) for t in rep.targets[:3]),
+            f"Target xa: {f(rep.targets[3])}",
+            f"MSS 1M: {f(rep.mss1.mss_level)} | Momentum {rep.score}/5",
+        ]
+        if zone:
+            lines.append(f"Chỉ vào nếu giá còn gần vùng retest {f(zone[0])}–{f(zone[1])};"
+                         f" đã chạy quá TP1 thì bỏ qua.")
+        lines.append("Bot sẽ nhắn khi chạm TP, dời SL hoặc cần thoát.")
+        self.notifier.send("\n".join(lines))
+
     def enter(self, rep: Report) -> None:
         m1 = rep.mss1
         key = (rep.direction, m1.mss_level, m1.sweep_price) if m1 else None
@@ -241,6 +261,7 @@ class SMCBot(Bot):
             return
         log.info("ENTRY %s %s @ %.2f SL %.2f (1R = $%.2f) targets %s", rep.direction,
                  self._fmt(size), rep.price, rep.sl, size * abs(rep.price - rep.sl), rep.targets)
+        self.alert_entry(rep, size)
         self._market(is_buy=rep.direction == "LONG", size=self._fmt(size), price=rep.price,
                      reduce_only=False)
         self.trade = Trade(rep.direction, rep.price, rep.sl, list(rep.targets), size, key,
@@ -255,6 +276,9 @@ class SMCBot(Bot):
         if fraction >= 1 or qty <= 0 or float(self._fmt(t.remaining - qty)) <= 0:
             qty = t.remaining
         log.info("EXIT %s %s (%s)", t.side, self._fmt(qty), reason)
+        left = t.remaining - qty
+        what = "ĐÓNG HẾT" if left <= 1e-12 else f"ĐÓNG {self._fmt(qty)} (còn {self._fmt(left)})"
+        self.notifier.send(f"{self.cfg.symbol} {t.side}: {what} @ ~{price:,.2f}\nLý do: {reason}")
         self._market(is_buy=t.side == "SHORT", size=self._fmt(qty), price=price, reduce_only=True)
         sign = 1 if t.side == "LONG" else -1
         r = sign * (price - t.entry) * qty / (t.risk * t.size) if t.risk and t.size else 0.0
@@ -311,4 +335,5 @@ class SMCBot(Bot):
             t.sl = new_sl
             t.stage += 1
             log.info("Protect profit: SL -> %.2f", t.sl)
+            self.notifier.send(f"{self.cfg.symbol} {t.side}: DỜI SL về {t.sl:,.2f}")
             self.save_state()

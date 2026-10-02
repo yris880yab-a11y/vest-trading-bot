@@ -205,3 +205,28 @@ def test_day_resets_at_8pm_new_york():
     before = bot.session_day()
     bot.now = lambda: datetime(2026, 10, 2, 0, 1, tzinfo=timezone.utc)    # 8:01 PM EDT
     assert bot.session_day() != before
+
+
+def test_telegram_alerts_for_manual_trading(monkeypatch):
+    sent = []
+    monkeypatch.setattr("vestbot.notify.Notifier.send", lambda self, text: sent.append(text))
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = SMCBot(make_cfg(dry_run=True, order_size="1", size_decimals=2,
+                          telegram_token="t", telegram_chat_id="c"), client)
+    bot.tick()
+    assert client.orders == []  # alert mode places nothing
+    assert sent and sent[0].startswith("SHORT") and "SL:" in sent[0] and "TP1/TP2/TP3" in sent[0]
+    bot.trade.targets = [30540.0, None, None, None]
+    move_to(client, 30539)
+    bot.tick()
+    assert any("ĐÓNG 0.50" in m for m in sent) and any("DỜI SL" in m for m in sent)
+
+
+def test_notifier_never_raises(monkeypatch):
+    import requests
+    from vestbot.notify import Notifier
+
+    def boom(*a, **k):
+        raise requests.ConnectionError("offline")
+    monkeypatch.setattr(requests, "post", boom)
+    Notifier("t", "c").send("hi")  # logs a warning, does not raise
