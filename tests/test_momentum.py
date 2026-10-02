@@ -131,3 +131,16 @@ def test_time_stop():
     bot.clock[0] += timedelta(minutes=16)
     bot.tick()
     assert bot.trade is None and feed.orders[-1]["reduce_only"]
+
+
+def test_reentry_in_same_candle_only_when_allowed():
+    feed = Feed(*burst(+1))
+    bot = bot_for(feed)
+    bot.tick()
+    feed.pos = 0
+    bot.tick()                        # stopped out by the exchange stop
+    bot.tick()
+    assert bot.trade is None          # default: one entry per 5M candle
+    bot.params = bot.params.__class__(max_per_candle=2)
+    bot.tick()
+    assert bot.trade is not None      # second entry allowed in the same candle

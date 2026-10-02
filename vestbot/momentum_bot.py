@@ -88,9 +88,11 @@ class MomentumBot(SMCBot):
                 self.last_why = msg
             return
         self.last_why = None
-        key = (sig.direction, str(sig.candle_key))
-        if key == self.last_setup:
-            return  # one entry per 5M candle
+        base = (sig.direction, str(sig.candle_key))
+        n = self.last_setup[2] if self.last_setup and tuple(self.last_setup[:2]) == base else 0
+        if n >= self.params.max_per_candle:
+            return  # entries per 5M candle used up
+        key = (*base, n + 1)
         block = self.risk_block(sig)
         if block:
             log.info("Bỏ qua %s: %s", sig.direction, block)

@@ -39,6 +39,7 @@ class MomoParams:
     fade_body: float = 6.0
     max_hold_min: float = 15.0
     tick: float = 0.25
+    max_per_candle: float = 1  # entries allowed in the same 5M candle
 
     @classmethod
     def from_cfg(cls, cfg) -> "MomoParams":
