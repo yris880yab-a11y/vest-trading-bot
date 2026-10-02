@@ -6,7 +6,8 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# VESTBOT_ENV_FILE picks another config file, e.g. .env.gc for a second bot
+load_dotenv(os.getenv("VESTBOT_ENV_FILE", ".env"))
 
 ENDPOINTS = {
     "prod": {

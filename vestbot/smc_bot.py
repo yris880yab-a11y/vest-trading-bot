@@ -230,7 +230,22 @@ class SMCBot(Bot):
             confirm = parse_candles(self.client.klines(self.cfg.confirm_symbol, "1m", limit=60))
         return data, confirm
 
+    def sync_balance(self) -> None:
+        """Use the broker's real balance when it has one (live only): several bots on one
+        account then see each other's P&L against the shared loss limits."""
+        if self.cfg.dry_run or not self.cfg.account_size or not hasattr(self.client, "balance"):
+            return
+        try:
+            bal = float(self.client.balance())
+        except Exception as e:  # keep trading on the bot's own ledger if the read fails
+            log.warning("Không đọc được số dư tài khoản: %s", e)
+            return
+        self.total_pnl_usd = bal - self.cfg.account_size
+        if self.day_start_balance is not None and self.day == self.session_day():
+            self.day_pnl_usd = bal - self.day_start_balance
+
     def tick(self) -> None:
+        self.sync_balance()
         self._roll_day()
         data, confirm = self.fetch()
         rep = analyze(data, self.cfg.symbol, confirm, self.cfg.min_momentum)

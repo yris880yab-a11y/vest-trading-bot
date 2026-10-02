@@ -6,3 +6,7 @@ __pycache__/
 data/
 bot_state.json
 bot_state.tmp
+.env.gc
+bot_state_gc.json
+bot_state_gc.tmp
+*.log

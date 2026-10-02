@@ -70,6 +70,14 @@ class TopstepClient:
     def accounts(self) -> list[dict]:
         return self._post("/api/Account/search", {"onlyActiveAccounts": True})["accounts"]
 
+    def balance(self) -> float:
+        """Real account balance, shared by every bot trading this account."""
+        acc_id = self.resolve_account()
+        for a in self.accounts():
+            if int(a["id"]) == acc_id:
+                return float(a["balance"])
+        raise RuntimeError(f"Không thấy tài khoản id {acc_id}")
+
     def resolve_account(self) -> int:
         if self.account_id is not None:
             return self.account_id

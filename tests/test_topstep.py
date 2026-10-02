@@ -130,3 +130,21 @@ def test_topstep_live_is_allowed_unlike_vest_capital():
     bot.client.set_leverage = lambda *a: None
     bot.client.account = lambda: {"positions": []}
     bot.start()  # no RuntimeError
+
+
+def test_real_balance_is_shared_between_bots():
+    bot = topstep_bot()
+    bot.now = lambda: datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)
+    bot.client.balance = lambda: 50000.0
+    bot.sync_balance()
+    bot._roll_day()                       # day starts at 50,000
+    bot.client.balance = lambda: 48300.0  # the other bot lost $1,700 today
+    bot.tick()
+    assert bot.total_pnl_usd == -1700 and bot.day_pnl_usd == -1700
+    assert bot.trade is None              # floor 48,000 is too close for a new $200 risk
+
+
+def test_balance_read_from_accounts():
+    c = client()
+    c.session.accounts = [{"id": 7, "name": "50KTC-1", "balance": 50123.5}]
+    assert c.balance() == 50123.5
