@@ -282,3 +282,14 @@ def test_activity_filter_waits_in_a_quiet_market():
     c1, c5, c15 = rejection_setup()  # last 30 minutes trade lighter than the profile average
     sig, why = momentum_signal(c1, c5, c15, MomoParams(entry_mode="rejection", active_vol_mult=1.0))
     assert sig is None and any("ít volume" in w for w in why)
+
+
+def test_activity_filter_baseline_length():
+    c1, c5, c15 = rejection_setup()
+    # vs the last 4 hours the market looks quiet; vs only the light drift it does not
+    sig, why = momentum_signal(c1, c5, c15, MomoParams(entry_mode="rejection", active_vol_mult=1.0,
+                                                       active_vol_base=240))
+    assert sig is None and any("ít volume" in w for w in why)
+    sig, why = momentum_signal(c1, c5, c15, MomoParams(entry_mode="rejection", active_vol_mult=1.0,
+                                                       active_vol_base=30))
+    assert sig is not None, why

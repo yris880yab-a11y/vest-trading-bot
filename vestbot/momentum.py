@@ -70,7 +70,8 @@ class MomoParams:
     vol_mult: float = 0.0      # >0: rejection candle volume >= this x average 1M volume
     fast_move: float = 6.0     # points away from the wick low that confirm the rejection
     bounce_vol_mult: float = 0.0  # >0: candles after the wick trade >= this x average 1M volume
-    active_vol_mult: float = 0.0  # >0: last 30 min of volume >= this x the profile's average
+    active_vol_mult: float = 0.0  # >0: last 30 min of volume >= this x the baseline average
+    active_vol_base: float = 0.0  # baseline length in minutes (0 = vp_lookback); 1440 = 24h
 
     @classmethod
     def from_cfg(cls, cfg) -> "MomoParams":
@@ -359,7 +360,7 @@ def momentum_signal(c1: list[Candle], c5: list[Candle], c15: list[Candle],
     if len(c5) < 20 or len(c1) < 8:
         return None, ["chưa đủ dữ liệu"]
     if p.active_vol_mult:  # trade only while the market is busy
-        hist = c1[:-1][-int(p.vp_lookback):]
+        hist = c1[:-1][-int(p.active_vol_base or p.vp_lookback):]
         recent = hist[-30:]
         base = sum(x.v for x in hist) / max(1, len(hist))
         if base and sum(x.v for x in recent) / max(1, len(recent)) < p.active_vol_mult * base:

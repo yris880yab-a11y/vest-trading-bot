@@ -63,7 +63,11 @@ class MomentumBot(SMCBot):
         self.sync_balance()
         self._roll_day()
         # the volume profile of the rejection entry needs MOMO_VP_LOOKBACK minutes of 1M bars
-        n1 = int(self.params.vp_lookback) + 10 if "rejection" in self.params.entry_mode else 60
+        n1 = 60
+        if "rejection" in self.params.entry_mode:
+            n1 = max(n1, int(self.params.vp_lookback) + 10)
+        if self.params.active_vol_mult:
+            n1 = max(n1, int(self.params.active_vol_base or self.params.vp_lookback) + 10)
         c1 = parse_candles(self.client.klines(self.cfg.symbol, "1m", limit=n1))
         c5 = parse_candles(self.client.klines(self.cfg.symbol, "5m", limit=60))
         c15 = parse_candles(self.client.klines(self.cfg.symbol, "15m", limit=60))
