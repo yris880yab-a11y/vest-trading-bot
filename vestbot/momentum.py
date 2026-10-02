@@ -50,7 +50,7 @@ class MomoParams:
     fade_body: float = 6.0
     max_hold_min: float = 15.0
     tick: float = 0.25
-    max_per_candle: float = 1  # entries allowed in the same 5M candle
+    max_per_candle: float = 1  # entries allowed in the same 5M candle (0 = no limit)
     # how to get in after the 5M impulse: fomo | close | pullback | breakout
     entry_mode: str = "fomo"
     close_max_retrace: float = 0.3  # close: skip if price gave back more of the candle body

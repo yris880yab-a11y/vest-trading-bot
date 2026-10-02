@@ -120,7 +120,7 @@ Lệnh đầu tiên khi chạy thật: mở TopstepX kiểm tra có **đúng 1 l
 |---|---|---|---|
 | `BOT_RISK_USD` | 100 | 100 | tiền rủi ro mỗi lệnh (1R) |
 | `BOT_MAX_CONTRACTS` | 25 | 25 | tối đa hợp đồng micro mỗi bot (Topstep 50K cho tổng 50) |
-| `BOT_MAX_DAILY_LOSS_R` | 3 | 3 | lỗ 3R trong ngày → ngừng vào lệnh (2 bot = tối đa ~$600/ngày) |
+| `BOT_MAX_DAILY_LOSS_R` | 0 | 0 | lỗ bao nhiêu R trong ngày thì ngừng; 0 = không dừng theo R (chỉ còn chặn mức thua tối đa Topstep) |
 | `BOT_MAX_TRADES_PER_DAY` | 0 | 0 | số lệnh tối đa mỗi ngày (0 = không giới hạn) |
 | `BOT_PROP_MAX_LOSS_USD` | 2000 | 2000 | MLL của Topstep 50K; bot chừa 25% an toàn (`BOT_PROP_SAFETY=0.75`) |
 | `BOT_PROFIT_TARGET_USD` | 3000 | 3000 | đạt mục tiêu Combine → ngừng |
@@ -129,6 +129,7 @@ Lệnh đầu tiên khi chạy thật: mở TopstepX kiểm tra có **đúng 1 l
 | `MOMO_SESSIONS` | 7-20 | (trống) | giờ UTC được mở lệnh; trống = 24h |
 | `MOMO_BLACKOUT` | 08:28-08:40 | 08:28-08:40 | giờ New York không vào lệnh và đóng lệnh đang mở (giờ ra tin 8:30) |
 | `MOMO_VOL_MULT` | 0 | 1.0 | volume nến rút râu ≥ x lần trung bình |
+| `MOMO_MAX_PER_CANDLE` | 0 | 0 | số lệnh trong cùng 1 nến 5M; 0 = không giới hạn |
 | `MOMO_SCALP_TP` | 10 | 1.5 | chốt 1/2 (điểm) |
 | `MOMO_MAX_SL` | 20 | 3.0 | SL xa hơn → bỏ lệnh |
 

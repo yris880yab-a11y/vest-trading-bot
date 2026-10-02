@@ -125,6 +125,15 @@ def test_zero_trade_limit_means_unlimited():
     assert bot.risk_block() is None
 
 
+def test_zero_daily_loss_r_means_no_r_stop():
+    client = FakeClient(short_setup_1m(push=(30560,)))
+    bot = SMCBot(make_cfg(dry_run=False, order_size="1", size_decimals=2,
+                          max_daily_loss_r=0), client)
+    bot._roll_day()
+    bot.day_r = -25.0
+    assert bot.risk_block() is None
+
+
 def test_realized_r_is_tracked():
     client = FakeClient(short_setup_1m(push=(30560,)))
     bot = SMCBot(make_cfg(dry_run=False, order_size="1", size_decimals=2), client)

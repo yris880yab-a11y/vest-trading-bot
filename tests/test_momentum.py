@@ -145,6 +145,13 @@ def test_reentry_in_same_candle_only_when_allowed():
     bot.params = bot.params.__class__(max_per_candle=2)
     bot.tick()
     assert bot.trade is not None      # second entry allowed in the same candle
+    bot.params = bot.params.__class__(max_per_candle=0)
+    bot.cfg.max_daily_loss_r = 0      # and no daily R stop
+    for _ in range(3):                # 0 = no cap: keeps re-entering after each stop-out
+        feed.pos = 0
+        bot.tick()
+        bot.tick()
+        assert bot.trade is not None
 
 
 def closed_impulse(retrace=2.0):

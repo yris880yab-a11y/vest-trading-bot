@@ -194,7 +194,7 @@ class SMCBot(Bot):
     def risk_block(self, rep: Report | None = None) -> str | None:
         if self.cfg.max_trades_per_day and self.day_trades >= self.cfg.max_trades_per_day:
             return f"đã đủ {self.cfg.max_trades_per_day} lệnh hôm nay"
-        if self.day_r <= -self.cfg.max_daily_loss_r:
+        if self.cfg.max_daily_loss_r and self.day_r <= -self.cfg.max_daily_loss_r:
             return f"đã lỗ {self.day_r:.2f}R hôm nay (giới hạn {self.cfg.max_daily_loss_r}R)"
         if not self.cfg.account_size:
             return None

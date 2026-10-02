@@ -60,7 +60,7 @@ Chiến lược EMA crossover cũ vẫn dùng được với `BOT_STRATEGY=ema`.
 
 - `BOT_RISK_USD`: số tiền chấp nhận mất mỗi lệnh (= 1R). Bot tự tính khối lượng = `BOT_RISK_USD / |entry − SL|`, nên SL xa thì vào ít, SL gần thì vào nhiều. Vì SL theo structure thường chỉ cách 0.15–0.3% giá, giá trị vị thế ≈ 4–6 lần số vốn khi rủi ro 1%/lệnh → cần đòn bẩy ~10x. `BOT_MAX_NOTIONAL_USD` chặn trường hợp SL quá gần.
 
-- `BOT_MAX_DAILY_LOSS_R` (mặc định 3): lỗ đủ 3R trong ngày (phiên CME, bắt đầu 22:00 UTC = 5:00 sáng VN) thì ngừng vào lệnh mới.
+- `BOT_MAX_DAILY_LOSS_R` (mặc định 3; `0` = tắt): lỗ đủ 3R trong ngày (phiên CME, bắt đầu 22:00 UTC = 5:00 sáng VN) thì ngừng vào lệnh mới.
 - `BOT_MAX_TRADES_PER_DAY` (mặc định 6): tối đa 6 lệnh mỗi ngày; `0` = không giới hạn (mẫu scalp momentum dùng 0).
 - `BOT_STATE_FILE` (mặc định `bot_state.json`): lưu lệnh đang mở (SL, TP đã chạm, R đã chốt). Bot tắt/bật lại vẫn quản lý tiếp lệnh đó; nếu trên sàn không còn vị thế thì bỏ trạng thái cũ.
 

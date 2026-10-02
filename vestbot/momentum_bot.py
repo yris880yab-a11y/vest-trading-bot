@@ -156,7 +156,7 @@ class MomentumBot(SMCBot):
         self.last_why = None
         base = (sig.direction, str(sig.candle_key))
         n = self.last_setup[2] if self.last_setup and tuple(self.last_setup[:2]) == base else 0
-        if n >= self.params.max_per_candle:
+        if self.params.max_per_candle and n >= self.params.max_per_candle:
             return  # entries per 5M candle used up
         key = (*base, n + 1)
         block = self.risk_block(sig)
