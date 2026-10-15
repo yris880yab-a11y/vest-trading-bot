@@ -102,6 +102,29 @@ Bắt nến 5M đang chạy nhanh: vào lệnh MARKET theo hướng nến, chố
 - **Sweep + MSS** (`MOMO_ENTRY_MODE=...,sweep`): nến 1M quét đáy thấp nhất `MOMO_SW_LOOKBACK` nến (không sâu quá `MOMO_SW_MAX_DEPTH`), giá giữ lại trên đáy đó rồi phá đỉnh của `MOMO_SW_MSS_BARS` nến trước cú quét → vào, SL dưới đáy quét (tối đa `MOMO_SW_MAX_SL`), mục tiêu `MOMO_SW_TP_R` lần SL. **Rejection ở đỉnh/đáy cũ** (`MOMO_REJ_SWINGS=1`): thêm đỉnh/đáy 1M đã xác nhận trong `MOMO_SWING_LOOKBACK` phút vào danh sách vùng của rejection (hỗ trợ cũ thành kháng cự). Hai kiểu này bắt đúng 2 ví dụ trên chart 15s ngày 2/10, nhưng trên toàn bộ dữ liệu (≈1,6 ngày) làm NQ giảm từ +87,6R xuống +69–77R và sụt sâu hơn, nên mặc định tắt.
 - **Lọc phiên** (`MOMO_SESSIONS`, giờ UTC): momentum lỗ đều ở phiên Á (NQ −7,7R đến −11,6R khi test), lời ở London/New York. Mặc định mẫu MNQ `7-20`, MGC để trống (24 giờ, nhờ lọc volume). `MOMO_BLACKOUT` (giờ New York, ví dụ `08:28-08:40,09:28-09:35`): không vào lệnh và đóng lệnh đang mở trong giờ ra tin / mở cửa. `MOMO_TREND_FILTER=1` chỉ vào cùng chiều EMA20 khung 15M. `MOMO_SCALP_R` / `MOMO_TRAIL_R` đổi chốt nửa / trail sang đơn vị R.
 
+### Bot tín hiệu order flow kiểu Bookmap (`python -m vestbot.flow_signal`)
+
+Đọc sổ lệnh L2 + time & sales NQ realtime từ TopstepX (market hub ProjectX) và **chỉ báo tín hiệu** (màn hình + Telegram), không đặt lệnh. Những gì trader Bookmap nhìn bằng mắt được quy thành luật trong `vestbot/orderflow.py`:
+
+| Trên Bookmap | Bot hiểu là |
+|---|---|
+| Vạch vàng heatmap | **tường**: mức giá có ≥ `FLOW_WALL_MIN` lot và ≥ `FLOW_WALL_MULT` × trung vị các mức quanh đó, đứng ≥ `FLOW_WALL_AGE` giây |
+| Bubble xanh/đỏ | lệnh market ≥ `FLOW_BIG_TRADE` lot (gộp các lệnh cùng mili-giây) |
+| Absorption | ≥ `FLOW_ABSORB_MIN_VOL` lot bán market vào 1 mức trong `FLOW_ABSORB_WINDOW` giây mà giá không xuống thêm, rồi bật `FLOW_CONFIRM_TICKS` tick → LONG (ngược lại → SHORT) |
+| Bật khỏi tường | bên bán test tường bid (≥ `FLOW_TEST_MIN_VOL` lot), tường còn đó, giá bật → LONG |
+| Tường bị ăn / bị rút | tường biến mất sau khi ≥ `FLOW_EAT_FRAC` size đã khớp = **ăn** → breakout theo hướng ăn; không khớp mà mất = **rút** (spoof), chỉ ghi log |
+| Delta / CVD, imbalance | delta `FLOW_DELTA_WINDOW` giây và tỉ lệ 10 mức bid/ask cộng điểm xác nhận |
+
+Trigger (absorption / bật tường / ăn tường) = 2 điểm, mỗi xác nhận (bubble cùng chiều, delta cùng chiều, imbalance, tường ngay tại mức absorption) +1, delta ngược mạnh −1; báo khi ≥ `FLOW_MIN_SCORE` (3). SL sau mức trigger `FLOW_SL_BUFFER` tick (3–15 điểm), TP = `FLOW_RR`R nhưng dừng 1 tick trước tường ngược chiều gần nhất; tường đó gần hơn `FLOW_MIN_RR`R thì bỏ.
+
+```
+SIGNAL [13:00:38] NQ LONG (absorption @ 19,990.00) score 4 | Entry 19,991.00 | SL 19,988.00 (3.00 pts) | TP 19,997.00 (2.0R) | absorption 19,990.00 · wall at the level · book imbalance 4.9
+```
+
+Cài: `cp .env.flow.example .env.flow`, điền TopstepX username/API key (+ Telegram), chạy `run_flow_signal.bat` hoặc `VESTBOT_ENV_FILE=.env.flow python -m vestbot.flow_signal NQ`. Thêm `--record data/nq_flow.jsonl` để ghi dữ liệu rồi `--replay data/nq_flow.jsonl` để chạy lại offline khi chỉnh ngưỡng. Mỗi 30 giây bot in trạng thái: giá, CVD, delta, imbalance, các tường lớn nhất, và các tường vừa bị ăn/rút, bubble.
+
+Giới hạn: ngưỡng mặc định là ước lượng cho NQ, **chưa backtest** (cần dữ liệu L2 ghi lại — hãy `--record` vài phiên rồi chỉnh). Dữ liệu ProjectX có thể không hiển thị đủ độ sâu như Rithmic/Bookmap. Phần GEX / gamma walls QQQ trên màn hình mẫu cần dữ liệu option, bot chưa dùng.
+
 Hướng dẫn cài đặt từng bước: [HUONG_DAN_NQ_GC.md](HUONG_DAN_NQ_GC.md). Cấu hình mẫu: `.env.topstep.momo.example` (MNQ), `.env.topstep.momo.gc.example` (MGC). Backtest: `python scripts/backtest.py NQ --strategy momentum`.
 
 ## Backtest
@@ -123,6 +146,8 @@ vestbot/
   client.py    # REST client: exchangeInfo, ticker, klines, depth, account, orders, cancel
   smc.py       # framework sweep → MSS → retest (thuần, test offline được)
   smc_bot.py   # vào lệnh, chốt từng phần, dời SL theo framework
+  orderflow.py # engine order flow kiểu Bookmap: tường, bubble, absorption, delta (thuần)
+  flow_signal.py # nghe L2 + trades TopstepX, báo tín hiệu (live / --record / --replay)
   analyze.py   # in báo cáo phân tích 1 lần
   strategy.py  # EMA crossover (chiến lược cũ)
   bot.py       # vòng lặp giao dịch

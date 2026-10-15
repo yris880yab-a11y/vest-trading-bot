@@ -13,3 +13,4 @@ bot_state_gc.tmp
 .env.momo
 .env.momo.gc
 bot_state_momo_*.json
+.env.flow
