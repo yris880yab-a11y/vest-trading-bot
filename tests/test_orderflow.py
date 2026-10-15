@@ -194,3 +194,15 @@ def test_paper_tracker_scores_tp_sl_and_time():
     p.on_signal(FlowSignal(10, "LONG", "absorption", 99, 100.0, 98.0, 110.0, 3))
     assert p.on_price(80, 101.0)[0].outcome == "TIME"
     assert "3 lệnh" in p.summary()
+
+
+def test_simulator_feeds_the_bot(tmp_path):
+    import subprocess
+    import sys
+
+    out = tmp_path / "sim.jsonl"
+    subprocess.run([sys.executable, "scripts/simulate_flow.py", "--out", str(out),
+                    "--hours", "0.05", "--seed", "3"], check=True)
+    eng = FlowEngine()
+    run(eng, replay(str(out)), lambda s: None, status_every=0)
+    assert len(eng.trades) > 100 and eng.book.best_bid < eng.book.best_ask
