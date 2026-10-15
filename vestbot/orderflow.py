@@ -374,3 +374,72 @@ class FlowEngine:
         return (f"px {self.last_price} bid {bb} ask {ba} | CVD {self.cvd:+g} "
                 f"Δ{self.p.delta_window:g}s {self.delta(ts):+g} | "
                 f"imb {self.book.imbalance(self.p.imb_levels):.2f} | walls {ws}")
+
+
+@dataclass
+class PaperTrade:
+    sig: FlowSignal
+    entry: float
+    exit_ts: float | None = None
+    exit: float | None = None
+    outcome: str | None = None  # TP / SL / TIME
+
+    @property
+    def r(self) -> float:
+        if self.exit is None:
+            return 0.0
+        d = 1 if self.sig.direction == "LONG" else -1
+        return d * (self.exit - self.entry) / abs(self.entry - self.sig.sl)
+
+
+class PaperTracker:
+    """Scores every signal against the trade prints that follow it: SL, TP or time stop.
+
+    Fills are ``slip_ticks`` worse than the signal price on entry and on stop/time exits
+    (TP is a resting limit, filled only once price trades one tick through it).
+    """
+
+    def __init__(self, tick: float = 0.25, slip_ticks: int = 1, max_hold: float = 900.0):
+        self.tick, self.slip, self.max_hold = tick, slip_ticks * tick, max_hold
+        self.open: list[PaperTrade] = []
+        self.closed: list[PaperTrade] = []
+
+    def on_signal(self, sig: FlowSignal) -> None:
+        d = 1 if sig.direction == "LONG" else -1
+        self.open.append(PaperTrade(sig, sig.entry + d * self.slip))
+
+    def on_price(self, ts: float, price: float) -> list[PaperTrade]:
+        done = []
+        for t in self.open:
+            d = 1 if t.sig.direction == "LONG" else -1
+            if d * (price - t.sig.sl) <= 0:
+                t.outcome, t.exit = "SL", t.sig.sl - d * self.slip
+            elif d * (price - t.sig.tp) >= self.tick:
+                t.outcome, t.exit = "TP", t.sig.tp
+            elif ts - t.sig.ts >= self.max_hold:
+                t.outcome, t.exit = "TIME", price - d * self.slip
+            else:
+                continue
+            t.exit_ts = ts
+            done.append(t)
+        if done:
+            self.open = [t for t in self.open if t.outcome is None]
+            self.closed += done
+        return done
+
+    def summary(self) -> str:
+        c = self.closed
+        if not c:
+            return f"Paper: chưa có lệnh đóng ({len(self.open)} đang mở)"
+        rs = [t.r for t in c]
+        eq = peak = dd = 0.0
+        for r in rs:
+            eq += r
+            peak = max(peak, eq)
+            dd = max(dd, peak - eq)
+        by = {k: sum(1 for t in c if t.outcome == k) for k in ("TP", "SL", "TIME")}
+        wins = sum(1 for r in rs if r > 0)
+        pts = sum((1 if t.sig.direction == "LONG" else -1) * (t.exit - t.entry) for t in c)
+        return (f"Paper: {len(c)} lệnh | thắng {wins} ({wins / len(c):.0%}) | TP {by['TP']} SL {by['SL']} "
+                f"hết giờ {by['TIME']} | tổng {sum(rs):+.2f}R ({pts:+.2f} điểm) | "
+                f"sụt tối đa {dd:.2f}R | đang mở {len(self.open)}")

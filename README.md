@@ -121,7 +121,7 @@ Trigger (absorption / bật tường / ăn tường) = 2 điểm, mỗi xác nh�
 SIGNAL [13:00:38] NQ LONG (absorption @ 19,990.00) score 4 | Entry 19,991.00 | SL 19,988.00 (3.00 pts) | TP 19,997.00 (2.0R) | absorption 19,990.00 · wall at the level · book imbalance 4.9
 ```
 
-Cài: `cp .env.flow.example .env.flow`, điền TopstepX username/API key (+ Telegram), chạy `run_flow_signal.bat` hoặc `VESTBOT_ENV_FILE=.env.flow python -m vestbot.flow_signal NQ`. Thêm `--record data/nq_flow.jsonl` để ghi dữ liệu rồi `--replay data/nq_flow.jsonl` để chạy lại offline khi chỉnh ngưỡng. Mỗi 30 giây bot in trạng thái: giá, CVD, delta, imbalance, các tường lớn nhất, và các tường vừa bị ăn/rút, bubble.
+Cài: `cp .env.flow.example .env.flow`, điền TopstepX username/API key (+ Telegram), chạy `run_flow_signal.bat` hoặc `VESTBOT_ENV_FILE=.env.flow python -m vestbot.flow_signal NQ`. Thêm `--record data/nq_flow.jsonl` để ghi dữ liệu rồi `--replay data/nq_flow.jsonl` để chạy lại offline khi chỉnh ngưỡng. Bot tự **chấm điểm paper** từng tín hiệu theo các lệnh khớp sau đó (chạm SL, chạm TP — phải khớp xuyên TP 1 tick, hay hết `--max-hold` 900 giây; trượt 1 tick khi vào và khi thoát bằng SL/hết giờ), ghi vào `flow_paper.csv` (`--paper-log`) và in tổng kết: số lệnh, tỉ lệ thắng, tổng R, sụt tối đa. Chạy thử 1 ngày: để bot chạy cả phiên với `--record`, cuối ngày xem tổng kết hoặc mở CSV. Mỗi 30 giây bot in trạng thái: giá, CVD, delta, imbalance, các tường lớn nhất, và các tường vừa bị ăn/rút, bubble.
 
 Giới hạn: ngưỡng mặc định là ước lượng cho NQ, **chưa backtest** (cần dữ liệu L2 ghi lại — hãy `--record` vài phiên rồi chỉnh). Dữ liệu ProjectX có thể không hiển thị đủ độ sâu như Rithmic/Bookmap. Phần GEX / gamma walls QQQ trên màn hình mẫu cần dữ liệu option, bot chưa dùng.
 

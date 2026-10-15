@@ -178,3 +178,19 @@ def test_market_hub_handshake_and_dispatch(monkeypatch):
     assert '"protocol": "json"' in sent[0]
     assert any("SubscribeContractMarketDepth" in m for m in sent)
     assert any("SubscribeContractTrades" in m for m in sent)
+
+
+def test_paper_tracker_scores_tp_sl_and_time():
+    from vestbot.orderflow import FlowSignal, PaperTracker
+
+    p = PaperTracker(max_hold=60)
+    p.on_signal(FlowSignal(0, "LONG", "absorption", 99, 100.0, 98.0, 104.0, 3))
+    p.on_signal(FlowSignal(0, "SHORT", "wall_bounce", 101, 100.0, 102.0, 96.0, 3))
+    short = p.on_price(1, 104.0)              # SHORT stopped; LONG TP needs a tick through
+    assert [t.outcome for t in short] == ["SL"] and short[0].exit == 102.25 and short[0].r < -1
+    done = p.on_price(2, 104.25)
+    assert [t.outcome for t in done] == ["TP"]
+    assert round(done[0].r, 2) == round(3.75 / 2.25, 2)   # 1 tick slip on entry
+    p.on_signal(FlowSignal(10, "LONG", "absorption", 99, 100.0, 98.0, 110.0, 3))
+    assert p.on_price(80, 101.0)[0].outcome == "TIME"
+    assert "3 lệnh" in p.summary()
